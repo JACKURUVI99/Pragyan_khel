@@ -10,8 +10,10 @@ export class VideoSegmenter {
     this.framesSinceLastSegment = 0;
     this.segmentationInterval = 1; // Run every frame for true tracking
 
+    this.initialRoi = null; // Original click
     this.roi = null; // {x, y} normalized
     this.lastMask = null; // Float32Array
+    this.lastArea = null;
     this.width = 0;
     this.height = 0;
   }
@@ -51,9 +53,11 @@ export class VideoSegmenter {
 
   setTarget(normalizedX, normalizedY) {
     if (!this.segmenter) return;
-    this.roi = { keypoint: { x: normalizedX, y: normalizedY } };
+    this.initialRoi = { keypoint: { x: normalizedX, y: normalizedY } };
+    this.roi = { ...this.initialRoi };
     this.framesSinceLastSegment = 0; // force immediate segment
     this.maskFailed = false;
+    this.lastArea = null;
 
     if (this.app.state === AppState.STREAMING || this.app.state === AppState.TRACKING) {
       this.app.setState(AppState.SEGMENTING);
@@ -81,7 +85,7 @@ export class VideoSegmenter {
       }
     }
     if (count < 10) return null; // Mask failed
-    return { x: sumX / count / width, y: sumY / count / height };
+    return { x: sumX / count / width, y: sumY / count / height, area: count };
   }
 
   processFrame(videoElement, timestamp) {
@@ -129,11 +133,31 @@ export class VideoSegmenter {
       const centroid = this.calculateCentroid(this.lastMask, this.width, this.height);
 
       if (centroid) {
-        this.roi = { keypoint: { x: centroid.x, y: centroid.y } };
-        if (this.app.state === AppState.SEGMENTING) {
-          this.app.setState(AppState.TRACKING);
+
+        let validTrack = true;
+        if (this.lastArea !== null && this.app.state === AppState.TRACKING) {
+          // Check if area changed drastically (e.g. 50% change)
+          const diff = Math.abs(centroid.area - this.lastArea) / this.lastArea;
+          if (diff > 0.5) { // Threshold
+            this.updateDebugLog(`Contour lost (Area diff ${(diff * 100).toFixed(0)}%). Resegmenting!`);
+            validTrack = false;
+          }
         }
-        this.updateDebugLog(`Tracking at ROI: {x: ${centroid.x.toFixed(2)}, y: ${centroid.y.toFixed(2)}}`);
+
+        if (validTrack) {
+          this.lastArea = centroid.area;
+          this.roi = { keypoint: { x: centroid.x, y: centroid.y } };
+
+          if (this.app.state === AppState.SEGMENTING) {
+            this.app.setState(AppState.TRACKING);
+          }
+          this.updateDebugLog(`Tracking at ROI: {x: ${centroid.x.toFixed(2)}, y: ${centroid.y.toFixed(2)}}`);
+        } else {
+          // Contour failed threshold, fallback to original ROI to try a fresh resegment
+          this.roi = { ...this.initialRoi }; // Copy original
+          this.app.setState(AppState.SEGMENTING);
+        }
+
       } else {
         this.updateDebugLog("Masking failed. Dropping track.");
         this.handleMaskFailure();
@@ -148,6 +172,7 @@ export class VideoSegmenter {
     this.maskFailed = true;
     this.roi = null;
     this.lastMask = null;
+    this.lastArea = null;
     if (this.app.state === AppState.TRACKING || this.app.state === AppState.SEGMENTING) {
       this.app.setState(AppState.STREAMING);
     }
