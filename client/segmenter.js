@@ -16,6 +16,18 @@ export class VideoSegmenter {
     this.lastArea = null;
     this.width = 0;
     this.height = 0;
+
+    // ── Multi-Focus state ──
+    this.multiFocusMode = false;
+    this.roiA = null;       // { keypoint: {x, y} }
+    this.roiB = null;
+    this.initialRoiA = null;
+    this.initialRoiB = null;
+    this.maskA = null;      // Float32Array
+    this.maskB = null;      // Float32Array
+    this.lastAreaA = null;
+    this.lastAreaB = null;
+    this.multiFocusClickCount = 0;
   }
 
   async init() {
@@ -51,19 +63,89 @@ export class VideoSegmenter {
     }
   }
 
+  // ── Single-click focus (existing) ──
+
   setTarget(normalizedX, normalizedY) {
     if (!this.segmenter) return;
+
+    // Clear multi-focus mode on regular click
+    this.clearMultiFocus();
+
     this.initialRoi = { keypoint: { x: normalizedX, y: normalizedY } };
     this.roi = { ...this.initialRoi };
     this.framesSinceLastSegment = 0; // force immediate segment
     this.maskFailed = false;
     this.lastArea = null;
 
-    if (this.app.state === AppState.STREAMING || this.app.state === AppState.TRACKING) {
+    if (this.app.state === AppState.STREAMING || this.app.state === AppState.TRACKING || this.app.state === AppState.MULTI_FOCUS) {
       this.app.setState(AppState.SEGMENTING);
     }
     this.updateDebugLog(`Target set at ROI: {x: ${normalizedX.toFixed(2)}, y: ${normalizedY.toFixed(2)}}`);
   }
+
+  // ── Rack Focus (two-click cinematic pull) ──
+
+  setMultiFocusPoint(normalizedX, normalizedY) {
+    if (!this.segmenter) return;
+
+    this.multiFocusClickCount++;
+
+    if (this.multiFocusClickCount === 1) {
+      // First point (A)
+      this.clearMultiFocus();
+      this.multiFocusMode = true;
+      this.multiFocusClickCount = 1; // re-set after clear
+      this.initialRoiA = { keypoint: { x: normalizedX, y: normalizedY } };
+      this.roiA = { ...this.initialRoiA };
+      this.maskA = null;
+      this.maskB = null;
+      this.lastAreaA = null;
+      this.lastAreaB = null;
+
+      // Also clear single-focus state
+      this.roi = null;
+      this.lastMask = null;
+
+      this.updateDebugLog(`Multi-Focus: Point A set at {x: ${normalizedX.toFixed(2)}, y: ${normalizedY.toFixed(2)}}. Shift+Click to set Point B.`);
+
+      // Start segmenting A immediately
+      this.framesSinceLastSegment = 0;
+      if (this.app.state !== AppState.LOADING_MODEL && this.app.state !== AppState.IDLE) {
+        this.app.setState(AppState.SEGMENTING);
+      }
+
+    } else if (this.multiFocusClickCount === 2) {
+      // Second point (B) – both objects now in focus
+      this.initialRoiB = { keypoint: { x: normalizedX, y: normalizedY } };
+      this.roiB = { ...this.initialRoiB };
+      this.lastAreaB = null;
+
+      this.framesSinceLastSegment = 0;
+      this.app.setState(AppState.MULTI_FOCUS);
+
+      this.updateDebugLog(`Multi-Focus: Point B set at {x: ${normalizedX.toFixed(2)}, y: ${normalizedY.toFixed(2)}}. Both objects in focus!`);
+
+    } else {
+      // Third click resets
+      this.clearMultiFocus();
+      this.setMultiFocusPoint(normalizedX, normalizedY);
+    }
+  }
+
+  clearMultiFocus() {
+    this.multiFocusMode = false;
+    this.multiFocusClickCount = 0;
+    this.roiA = null;
+    this.roiB = null;
+    this.initialRoiA = null;
+    this.initialRoiB = null;
+    this.maskA = null;
+    this.maskB = null;
+    this.lastAreaA = null;
+    this.lastAreaB = null;
+  }
+
+  // ── Debug ──
 
   updateDebugLog(message) {
     const el = document.getElementById('debug-text');
@@ -88,21 +170,25 @@ export class VideoSegmenter {
     return { x: sumX / count / width, y: sumY / count / height, area: count };
   }
 
+  // ── Frame processing ──
+
   processFrame(videoElement, timestamp) {
-    if (!this.segmenter || this.maskFailed) return null;
+    if (!this.segmenter) return null;
 
     this.width = videoElement.videoWidth;
     this.height = videoElement.videoHeight;
 
+    // ── Multi-Focus mode ──
+    if (this.multiFocusMode) {
+      return this._processMultiFocusFrame(videoElement, timestamp);
+    }
+
+    // ── Single focus mode (original) ──
+    if (this.maskFailed) return null;
     if (!this.roi) return null;
 
-    // The user requested: "re segmentation shud happen only when masking fails"
-    // So we assume "segmentation" is the heavy process, and "tracking" is holding it?
-    // Actually, InteractiveSegmenter requires the ROI to track.
     if (this.framesSinceLastSegment === 0) {
       try {
-        // InteractiveSegmenter API
-        // If segmentForVideo exists we use it, otherwise fallback to segment
         if (this.segmenter.segmentForVideo) {
           this.segmenter.segmentForVideo(videoElement, this.roi, timestamp, (result) => this.handleResult(result));
         } else {
@@ -124,6 +210,91 @@ export class VideoSegmenter {
       height: this.height
     };
   }
+
+  _processMultiFocusFrame(videoElement, timestamp) {
+    // Segment ROI A
+    if (this.roiA && this.framesSinceLastSegment === 0) {
+      try {
+        const roiACopy = { keypoint: { ...this.roiA.keypoint } };
+        if (this.segmenter.segmentForVideo) {
+          this.segmenter.segmentForVideo(videoElement, roiACopy, timestamp, (result) => {
+            this._handleMultiResult(result, 'A');
+          });
+        } else {
+          this.segmenter.segment(videoElement, roiACopy, (result) => {
+            this._handleMultiResult(result, 'A');
+          });
+        }
+      } catch (e) {
+        console.error("Multi-focus segmentation A error:", e);
+      }
+    }
+
+    // Segment ROI B (only if second point is set)
+    if (this.roiB && this.framesSinceLastSegment === 0) {
+      try {
+        const roiBCopy = { keypoint: { ...this.roiB.keypoint } };
+        // Use a slightly offset timestamp to avoid collision with the same frame
+        const tsB = timestamp + 1;
+        if (this.segmenter.segmentForVideo) {
+          this.segmenter.segmentForVideo(videoElement, roiBCopy, tsB, (result) => {
+            this._handleMultiResult(result, 'B');
+          });
+        } else {
+          this.segmenter.segment(videoElement, roiBCopy, (result) => {
+            this._handleMultiResult(result, 'B');
+          });
+        }
+      } catch (e) {
+        console.error("Multi-focus segmentation B error:", e);
+      }
+    }
+
+    this.framesSinceLastSegment++;
+    if (this.framesSinceLastSegment >= this.segmentationInterval) {
+      this.framesSinceLastSegment = 0;
+    }
+
+    // Return multi-focus data
+    return {
+      multiFocus: true,
+      maskA: this.maskA,
+      maskB: this.maskB,
+      width: this.width,
+      height: this.height,
+      mask: this.maskA
+    };
+  }
+
+  _handleMultiResult(result, which) {
+    if (result && result.confidenceMasks && result.confidenceMasks.length > 0) {
+      const maskData = result.confidenceMasks[0].getAsFloat32Array();
+      const centroid = this.calculateCentroid(maskData, this.width, this.height);
+
+      if (which === 'A') {
+        this.maskA = maskData;
+        if (centroid) {
+          this.lastAreaA = centroid.area;
+          this.roiA = { keypoint: { x: centroid.x, y: centroid.y } };
+        }
+      } else {
+        this.maskB = maskData;
+        if (centroid) {
+          this.lastAreaB = centroid.area;
+          this.roiB = { keypoint: { x: centroid.x, y: centroid.y } };
+        }
+      }
+
+      // Update debug log
+      if (this.roiA && this.roiB) {
+        this.updateDebugLog(
+          `Rack Focus | T: ${this.focusT.toFixed(2)} | A: {${this.roiA.keypoint.x.toFixed(2)},${this.roiA.keypoint.y.toFixed(2)}} | B: {${this.roiB.keypoint.x.toFixed(2)},${this.roiB.keypoint.y.toFixed(2)}}`
+        );
+      }
+    }
+  }
+
+  // ── Single-focus result handlers (original) ──
 
   handleResult(result) {
     if (result && result.confidenceMasks && result.confidenceMasks.length > 0) {

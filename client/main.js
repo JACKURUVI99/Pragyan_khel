@@ -6,7 +6,8 @@ export const AppState = {
   LOADING_MODEL: 'LOADING_MODEL',
   STREAMING: 'STREAMING',
   SEGMENTING: 'SEGMENTING',
-  TRACKING: 'TRACKING'
+  TRACKING: 'TRACKING',
+  MULTI_FOCUS: 'MULTI_FOCUS'
 };
 
 class App {
@@ -31,9 +32,16 @@ class App {
       loadingOverlay: document.getElementById('loading-overlay'),
       idleView: document.getElementById('idle-view'),
       debugText: document.getElementById('debug-text'),
+      rackFocusHint: document.getElementById('rack-focus-hint'),
+      rackFocusDotA: document.getElementById('rack-dot-a'),
+      rackFocusDotB: document.getElementById('rack-dot-b'),
     };
 
     this.isDebug = false;
+
+    // Rack focus click positions (in CSS px relative to canvas container)
+    this.rackDotAPos = null;
+    this.rackDotBPos = null;
 
     this.init();
   }
@@ -113,7 +121,52 @@ class App {
     if (clickX >= 0 && clickX <= renderedWidth && clickY >= 0 && clickY <= renderedHeight) {
       const px = clickX / renderedWidth;
       const py = clickY / renderedHeight;
-      this.segmenter.setTarget(px, py);
+
+      if (e.shiftKey) {
+        // ── Multi-Focus mode ──
+        this.segmenter.setMultiFocusPoint(px, py);
+
+        // Store CSS position for the visual dot overlay
+        const dotX = e.clientX - rect.left;
+        const dotY = e.clientY - rect.top;
+
+        if (this.segmenter.multiFocusClickCount === 1) {
+          this.rackDotAPos = { x: dotX, y: dotY };
+          this.rackDotBPos = null;
+          this._updateRackDots(rect);
+        } else if (this.segmenter.multiFocusClickCount === 2) {
+          this.rackDotBPos = { x: dotX, y: dotY };
+          this._updateRackDots(rect);
+        }
+      } else {
+        // ── Single focus (original) ──
+        this.rackDotAPos = null;
+        this.rackDotBPos = null;
+        this._updateRackDots(rect);
+        this.segmenter.setTarget(px, py);
+      }
+    }
+  }
+
+  _updateRackDots(rect) {
+    const dotA = this.ui.rackFocusDotA;
+    const dotB = this.ui.rackFocusDotB;
+    if (!dotA || !dotB) return;
+
+    if (this.rackDotAPos) {
+      dotA.style.left = `${this.rackDotAPos.x}px`;
+      dotA.style.top = `${this.rackDotAPos.y}px`;
+      dotA.classList.remove('hidden');
+    } else {
+      dotA.classList.add('hidden');
+    }
+
+    if (this.rackDotBPos) {
+      dotB.style.left = `${this.rackDotBPos.x}px`;
+      dotB.style.top = `${this.rackDotBPos.y}px`;
+      dotB.classList.remove('hidden');
+    } else {
+      dotB.classList.add('hidden');
     }
   }
 
@@ -126,6 +179,12 @@ class App {
   updateUI() {
     this.ui.stateDot.className = 'w-2 h-2 rounded-full transition-colors duration-300';
     this.ui.loadingOverlay.classList.add('hidden');
+
+    // Update multi-focus hint visibility
+    if (this.ui.rackFocusHint) {
+      this.ui.rackFocusHint.classList.toggle('hidden',
+        this.state === AppState.IDLE || this.state === AppState.LOADING_MODEL);
+    }
 
     switch (this.state) {
       case AppState.IDLE:
@@ -148,6 +207,12 @@ class App {
         if (this.state === AppState.SEGMENTING) this.ui.stateDot.classList.add('bg-amber-400', 'animate-pulse');
         if (this.state === AppState.TRACKING) this.ui.stateDot.classList.add('bg-emerald-400');
 
+        this.ui.idleView.classList.add('hidden');
+        this.canvas.classList.remove('hidden');
+        break;
+      case AppState.MULTI_FOCUS:
+        this.ui.stateText.textContent = 'MULTI FOCUS';
+        this.ui.stateDot.classList.add('bg-violet-400', 'animate-pulse');
         this.ui.idleView.classList.add('hidden');
         this.canvas.classList.remove('hidden');
         break;

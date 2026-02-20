@@ -11,6 +11,7 @@ export class Renderer {
     this.program = null;
     this.videoTexture = null;
     this.maskTexture = null;
+    this.maskTextureB = null;
     this.initWebGL();
   }
 
@@ -32,19 +33,56 @@ export class Renderer {
             in vec2 v_texCoord;
             uniform sampler2D u_image;
             uniform sampler2D u_mask;
+            uniform sampler2D u_maskB;
             uniform bool u_debug;
+            uniform bool u_multiFocus;
             out vec4 outColor;
 
             void main() {
-                float maskVal = texture(u_mask, v_texCoord).r;
+                float maskValA = texture(u_mask, v_texCoord).r;
+                float maskValB = texture(u_maskB, v_texCoord).r;
                 vec4 rawColor = texture(u_image, v_texCoord);
                 
                 if (u_debug) {
-                    outColor = mix(rawColor, vec4(1.0, 0.0, 0.0, 1.0), maskVal * 0.5);
+                    if (u_multiFocus) {
+                        // Debug: Red for mask A, Blue for mask B
+                        vec4 tinted = rawColor;
+                        tinted = mix(tinted, vec4(1.0, 0.0, 0.0, 1.0), maskValA * 0.5);
+                        tinted = mix(tinted, vec4(0.0, 0.3, 1.0, 1.0), maskValB * 0.5);
+                        outColor = tinted;
+                    } else {
+                        outColor = mix(rawColor, vec4(1.0, 0.0, 0.0, 1.0), maskValA * 0.5);
+                    }
                     return;
                 }
 
-                if (maskVal > 0.1) {
+                // ── Multi-Focus mode: both regions stay sharp ──
+                if (u_multiFocus) {
+                    float sharpness = max(maskValA, maskValB);
+
+                    if (sharpness > 0.1) {
+                        outColor = rawColor;
+                    } else {
+                        // Blur everything outside both masks
+                        vec4 color = vec4(0.0);
+                        vec2 texSize = vec2(textureSize(u_image, 0));
+                        vec2 texelSize = 1.0 / texSize;
+                        float total = 0.0;
+                        float radius = 4.0;
+
+                        for (float x = -2.0; x <= 2.0; x++) {
+                            for (float y = -2.0; y <= 2.0; y++) {
+                                color += texture(u_image, v_texCoord + vec2(x, y) * texelSize * radius);
+                                total += 1.0;
+                            }
+                        }
+                        outColor = color / total;
+                    }
+                    return;
+                }
+
+                // ── Single focus mode (original) ──
+                if (maskValA > 0.1) {
                     outColor = rawColor;
                 } else {
                     // Simple box blur inline
@@ -95,6 +133,7 @@ export class Renderer {
     gl.vertexAttribPointer(texCoordLoc, 2, gl.FLOAT, false, 0, 0);
 
     // Setup textures
+    // TEXTURE0 = video
     gl.activeTexture(gl.TEXTURE0);
     this.videoTexture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.videoTexture);
@@ -102,9 +141,10 @@ export class Renderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
 
-    // WebGL2 Extension for Float32 Textures (EXT_color_buffer_float in WebGL2 allows R32F)
+    // WebGL2 Extension for Float32 Textures
     gl.getExtension('EXT_color_buffer_float');
 
+    // TEXTURE1 = mask A (or single mask)
     gl.activeTexture(gl.TEXTURE1);
     this.maskTexture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.maskTexture);
@@ -113,9 +153,19 @@ export class Renderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
 
+    // TEXTURE2 = mask B (rack focus)
+    gl.activeTexture(gl.TEXTURE2);
+    this.maskTextureB = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.maskTextureB);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+
     gl.useProgram(this.program);
     gl.uniform1i(gl.getUniformLocation(this.program, "u_image"), 0);
     gl.uniform1i(gl.getUniformLocation(this.program, "u_mask"), 1);
+    gl.uniform1i(gl.getUniformLocation(this.program, "u_maskB"), 2);
 
     this.vao = vao;
   }
@@ -138,10 +188,10 @@ export class Renderer {
     return prog;
   }
 
-  updateMaskTexture(maskArray, width, height) {
+  updateMaskTexture(textureUnit, texture, maskArray, width, height) {
     const gl = this.gl;
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, this.maskTexture);
+    gl.activeTexture(textureUnit);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
     if (maskArray && width > 0 && height > 0) {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, width, height, 0, gl.RED, gl.FLOAT, maskArray);
     } else {
@@ -156,19 +206,30 @@ export class Renderer {
 
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
 
+    // Upload video texture
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.videoTexture);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, videoElement);
 
-    if (maskData) {
-      this.updateMaskTexture(maskData.mask, maskData.width, maskData.height);
+    const isMultiFocus = maskData && maskData.multiFocus;
+
+    if (isMultiFocus) {
+      // Multi focus: upload both masks
+      this.updateMaskTexture(gl.TEXTURE1, this.maskTexture, maskData.maskA, maskData.width, maskData.height);
+      this.updateMaskTexture(gl.TEXTURE2, this.maskTextureB, maskData.maskB, maskData.width, maskData.height);
+    } else if (maskData) {
+      // Single focus: upload mask A only
+      this.updateMaskTexture(gl.TEXTURE1, this.maskTexture, maskData.mask, maskData.width, maskData.height);
+      this.updateMaskTexture(gl.TEXTURE2, this.maskTextureB, null, 1, 1);
     } else {
-      this.updateMaskTexture(null, 1, 1);
+      this.updateMaskTexture(gl.TEXTURE1, this.maskTexture, null, 1, 1);
+      this.updateMaskTexture(gl.TEXTURE2, this.maskTextureB, null, 1, 1);
     }
 
     gl.useProgram(this.program);
     gl.bindVertexArray(this.vao);
     gl.uniform1i(gl.getUniformLocation(this.program, "u_debug"), isDebug ? 1 : 0);
+    gl.uniform1i(gl.getUniformLocation(this.program, "u_multiFocus"), isMultiFocus ? 1 : 0);
 
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
