@@ -71,8 +71,16 @@
 
       <!-- Rack Focus Hint -->
       <div id="rack-focus-hint"
-        class="absolute top-4 right-4 text-xs font-mono text-violet-300 bg-zinc-950/70 backdrop-blur-sm px-3 py-1.5 rounded-lg z-20 hidden border border-violet-500/30">
-        ⇧ Shift+Click two points for <span class="text-violet-400 font-semibold">Multi-Focus</span>
+        class="absolute top-4 right-4 text-xs font-mono text-violet-300 bg-zinc-950/70 backdrop-blur-sm px-3 py-1.5 rounded-lg z-20 hidden border border-violet-500/30 space-y-1">
+        <div>⇧ Shift+Click two points for <span class="text-violet-400 font-semibold">Multi-Focus</span></div>
+        <div>⌃ Ctrl+Click subjects for <span class="text-amber-400 font-semibold">Priority Focus</span></div>
+      </div>
+
+      <!-- Priority Panel -->
+      <div id="priority-panel"
+        class="absolute bottom-4 right-4 z-30 hidden bg-zinc-950/85 backdrop-blur-sm border border-zinc-700/50 rounded-lg px-3 py-2 min-w-[140px] shadow-xl">
+        <div class="text-[10px] font-mono text-zinc-500 uppercase tracking-wider mb-1.5">Priority Order</div>
+        <div id="priority-list" class="flex flex-col gap-1"></div>
       </div>
     </div>
 

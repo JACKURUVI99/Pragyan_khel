@@ -35,6 +35,14 @@ export class VideoSegmenter {
     this.lastAreaA = null;
     this.lastAreaB = null;
     this.multiFocusClickCount = 0;
+
+    // ── Priority Focus state ──
+    this.priorityFocusMode = false;
+    this.subjects = [];         // Array of { id, roi, previousRoi, initialRoi, mask, lastArea, priority }
+    this.subjectIdCounter = 0;
+    this.priorityWeights = [1.0, 0.7, 0.5, 0.35, 0.25];
+    this.maxSubjects = 5;
+    this.compositeMask = null;  // Final weighted Float32Array
   }
 
   async init() {
@@ -80,8 +88,9 @@ export class VideoSegmenter {
   setTarget(normalizedX, normalizedY) {
     if (!this.segmenter) return;
 
-    // Clear multi-focus mode on regular click
+    // Clear multi-focus and priority mode on regular click
     this.clearMultiFocus();
+    this.clearPriorityFocus();
 
     this.initialRoi = { keypoint: { x: normalizedX, y: normalizedY } };
     this.roi = { ...this.initialRoi };
@@ -90,7 +99,7 @@ export class VideoSegmenter {
     this.maskFailed = false;
     this.lastArea = null;
 
-    if (this.app.state === AppState.STREAMING || this.app.state === AppState.TRACKING || this.app.state === AppState.MULTI_FOCUS) {
+    if (this.app.state === AppState.STREAMING || this.app.state === AppState.TRACKING || this.app.state === AppState.MULTI_FOCUS || this.app.state === AppState.PRIORITY_FOCUS) {
       this.app.setState(AppState.SEGMENTING);
     }
     this.updateDebugLog(`Target set at ROI: {x: ${normalizedX.toFixed(2)}, y: ${normalizedY.toFixed(2)}}`);
@@ -160,6 +169,80 @@ export class VideoSegmenter {
     this.lastAreaB = null;
   }
 
+  // ── Priority Focus (N-subject with weights) ──
+
+  addPrioritySubject(normalizedX, normalizedY) {
+    if (!this.segmenter) return null;
+    if (this.subjects.length >= this.maxSubjects) {
+      this.updateDebugLog(`Max ${this.maxSubjects} subjects reached.`);
+      return null;
+    }
+
+    // First subject clears single/multi focus
+    if (!this.priorityFocusMode) {
+      this.clearMultiFocus();
+      this.roi = null;
+      this.lastMask = null;
+      this.previousRoi = null;
+      this.priorityFocusMode = true;
+    }
+
+    const id = ++this.subjectIdCounter;
+    const priority = this.subjects.length; // 0-indexed priority
+    const subject = {
+      id,
+      roi: { keypoint: { x: normalizedX, y: normalizedY } },
+      previousRoi: null,
+      initialRoi: { keypoint: { x: normalizedX, y: normalizedY } },
+      mask: null,
+      lastArea: null,
+      priority
+    };
+    this.subjects.push(subject);
+    this.framesSinceLastSegment = 0;
+
+    if (this.app.state !== AppState.LOADING_MODEL && this.app.state !== AppState.IDLE) {
+      this.app.setState(AppState.PRIORITY_FOCUS);
+    }
+
+    this.updateDebugLog(`Priority Focus: Added subject #${this.subjects.length} at {${normalizedX.toFixed(2)}, ${normalizedY.toFixed(2)}}`);
+    return id;
+  }
+
+  removePrioritySubject(id) {
+    this.subjects = this.subjects.filter(s => s.id !== id);
+    // Reassign priorities
+    this.subjects.forEach((s, i) => { s.priority = i; });
+
+    if (this.subjects.length === 0) {
+      this.clearPriorityFocus();
+      if (this.app.state === AppState.PRIORITY_FOCUS) {
+        this.app.setState(AppState.STREAMING);
+      }
+    }
+    this.framesSinceLastSegment = 0;
+    this.updateDebugLog(`Priority Focus: Removed subject. ${this.subjects.length} remaining.`);
+  }
+
+  reorderPriorities(orderedIds) {
+    const reordered = [];
+    for (const id of orderedIds) {
+      const subject = this.subjects.find(s => s.id === id);
+      if (subject) reordered.push(subject);
+    }
+    // Reassign priorities
+    reordered.forEach((s, i) => { s.priority = i; });
+    this.subjects = reordered;
+    this.framesSinceLastSegment = 0;
+    this.updateDebugLog(`Priority Focus: Reordered. #1=${orderedIds[0]}`);
+  }
+
+  clearPriorityFocus() {
+    this.priorityFocusMode = false;
+    this.subjects = [];
+    this.compositeMask = null;
+  }
+
   // ── Debug ──
 
   updateDebugLog(message) {
@@ -193,6 +276,11 @@ export class VideoSegmenter {
     this.width = videoElement.videoWidth;
     this.height = videoElement.videoHeight;
 
+    // ── Priority Focus mode ──
+    if (this.priorityFocusMode && this.subjects.length > 0) {
+      return this._processPriorityFrame(videoElement, timestamp);
+    }
+
     // ── Multi-Focus mode ──
     if (this.multiFocusMode) {
       return this._processMultiFocusFrame(videoElement, timestamp);
@@ -224,6 +312,105 @@ export class VideoSegmenter {
       width: this.width,
       height: this.height
     };
+  }
+
+  // ── Priority Focus frame processing ──
+
+  _processPriorityFrame(videoElement, timestamp) {
+    if (this.framesSinceLastSegment === 0) {
+      // Segment each subject sequentially with offset timestamps
+      for (let i = 0; i < this.subjects.length; i++) {
+        const subject = this.subjects[i];
+        try {
+          const roiCopy = { keypoint: { ...subject.roi.keypoint } };
+          const ts = timestamp + i; // offset to avoid collision
+          const idx = i;
+          if (this.segmenter.segmentForVideo) {
+            this.segmenter.segmentForVideo(videoElement, roiCopy, ts, (result) => {
+              this._handlePriorityResult(result, idx);
+            });
+          } else {
+            this.segmenter.segment(videoElement, roiCopy, (result) => {
+              this._handlePriorityResult(result, idx);
+            });
+          }
+        } catch (e) {
+          console.error(`Priority segmentation error for subject ${i}:`, e);
+        }
+      }
+    }
+
+    this.framesSinceLastSegment++;
+    if (this.framesSinceLastSegment >= this.segmentationInterval) {
+      this.framesSinceLastSegment = 0;
+    }
+
+    // Composite all masks
+    this._compositeWeightedMask();
+
+    return {
+      mask: this.compositeMask,
+      width: this.width,
+      height: this.height,
+      priorityFocus: true
+    };
+  }
+
+  _handlePriorityResult(result, subjectIndex) {
+    if (subjectIndex >= this.subjects.length) return;
+    const subject = this.subjects[subjectIndex];
+
+    if (result && result.confidenceMasks && result.confidenceMasks.length > 0) {
+      const maskData = result.confidenceMasks[0].getAsFloat32Array();
+      const centroid = this.calculateCentroid(maskData, this.width, this.height);
+
+      subject.mask = maskData;
+
+      if (centroid) {
+        subject.lastArea = centroid.area;
+        // Focus Follow: lerp toward centroid
+        if (subject.previousRoi) {
+          const smoothX = VideoSegmenter.lerp(subject.previousRoi.x, centroid.x, this.followDamping);
+          const smoothY = VideoSegmenter.lerp(subject.previousRoi.y, centroid.y, this.followDamping);
+          subject.roi = { keypoint: { x: smoothX, y: smoothY } };
+          subject.previousRoi = { x: smoothX, y: smoothY };
+        } else {
+          subject.roi = { keypoint: { x: centroid.x, y: centroid.y } };
+          subject.previousRoi = { x: centroid.x, y: centroid.y };
+        }
+      }
+    }
+
+    // Update debug
+    const parts = this.subjects.map((s, i) =>
+      `#${i + 1}(w=${this.priorityWeights[s.priority]?.toFixed(1) || '?'}): {${s.roi.keypoint.x.toFixed(2)},${s.roi.keypoint.y.toFixed(2)}}`
+    );
+    this.updateDebugLog(`Priority | ${parts.join(' | ')}`);
+  }
+
+  _compositeWeightedMask() {
+    const totalPixels = this.width * this.height;
+    if (totalPixels === 0) return;
+
+    // Reuse or create composite buffer
+    if (!this.compositeMask || this.compositeMask.length !== totalPixels) {
+      this.compositeMask = new Float32Array(totalPixels);
+    } else {
+      this.compositeMask.fill(0);
+    }
+
+    // For each subject, blend its mask with priority weight (max wins)
+    for (const subject of this.subjects) {
+      if (!subject.mask || subject.mask.length !== totalPixels) continue;
+      const weight = this.priorityWeights[subject.priority] || 0.2;
+
+      for (let i = 0; i < totalPixels; i++) {
+        const weighted = subject.mask[i] * weight;
+        if (weighted > this.compositeMask[i]) {
+          this.compositeMask[i] = weighted;
+        }
+      }
+    }
   }
 
   _processMultiFocusFrame(videoElement, timestamp) {
