@@ -12,15 +12,22 @@ export class VideoSegmenter {
 
     this.initialRoi = null; // Original click
     this.roi = null; // {x, y} normalized
+    this.previousRoi = null; // For focus-follow damping
     this.lastMask = null; // Float32Array
     this.lastArea = null;
     this.width = 0;
     this.height = 0;
 
+    // ── Focus Follow damping factor ──
+    // Lower = smoother/slower follow, higher = snappier
+    this.followDamping = 0.08;
+
     // ── Multi-Focus state ──
     this.multiFocusMode = false;
     this.roiA = null;       // { keypoint: {x, y} }
     this.roiB = null;
+    this.previousRoiA = null; // For focus-follow damping on A
+    this.previousRoiB = null; // For focus-follow damping on B
     this.initialRoiA = null;
     this.initialRoiB = null;
     this.maskA = null;      // Float32Array
@@ -63,6 +70,11 @@ export class VideoSegmenter {
     }
   }
 
+  // ── Lerp helper for smooth focus follow ──
+  static lerp(a, b, t) {
+    return a + (b - a) * t;
+  }
+
   // ── Single-click focus (existing) ──
 
   setTarget(normalizedX, normalizedY) {
@@ -73,6 +85,7 @@ export class VideoSegmenter {
 
     this.initialRoi = { keypoint: { x: normalizedX, y: normalizedY } };
     this.roi = { ...this.initialRoi };
+    this.previousRoi = null; // Reset damping so first frame snaps to click
     this.framesSinceLastSegment = 0; // force immediate segment
     this.maskFailed = false;
     this.lastArea = null;
@@ -137,6 +150,8 @@ export class VideoSegmenter {
     this.multiFocusClickCount = 0;
     this.roiA = null;
     this.roiB = null;
+    this.previousRoiA = null;
+    this.previousRoiB = null;
     this.initialRoiA = null;
     this.initialRoiB = null;
     this.maskA = null;
@@ -275,20 +290,39 @@ export class VideoSegmenter {
         this.maskA = maskData;
         if (centroid) {
           this.lastAreaA = centroid.area;
-          this.roiA = { keypoint: { x: centroid.x, y: centroid.y } };
+          // Focus Follow: lerp ROI A toward centroid
+          if (this.previousRoiA) {
+            const smoothX = VideoSegmenter.lerp(this.previousRoiA.x, centroid.x, this.followDamping);
+            const smoothY = VideoSegmenter.lerp(this.previousRoiA.y, centroid.y, this.followDamping);
+            this.roiA = { keypoint: { x: smoothX, y: smoothY } };
+            this.previousRoiA = { x: smoothX, y: smoothY };
+          } else {
+            // First frame: snap directly
+            this.roiA = { keypoint: { x: centroid.x, y: centroid.y } };
+            this.previousRoiA = { x: centroid.x, y: centroid.y };
+          }
         }
       } else {
         this.maskB = maskData;
         if (centroid) {
           this.lastAreaB = centroid.area;
-          this.roiB = { keypoint: { x: centroid.x, y: centroid.y } };
+          // Focus Follow: lerp ROI B toward centroid
+          if (this.previousRoiB) {
+            const smoothX = VideoSegmenter.lerp(this.previousRoiB.x, centroid.x, this.followDamping);
+            const smoothY = VideoSegmenter.lerp(this.previousRoiB.y, centroid.y, this.followDamping);
+            this.roiB = { keypoint: { x: smoothX, y: smoothY } };
+            this.previousRoiB = { x: smoothX, y: smoothY };
+          } else {
+            this.roiB = { keypoint: { x: centroid.x, y: centroid.y } };
+            this.previousRoiB = { x: centroid.x, y: centroid.y };
+          }
         }
       }
 
       // Update debug log
       if (this.roiA && this.roiB) {
         this.updateDebugLog(
-          `Rack Focus | T: ${this.focusT.toFixed(2)} | A: {${this.roiA.keypoint.x.toFixed(2)},${this.roiA.keypoint.y.toFixed(2)}} | B: {${this.roiB.keypoint.x.toFixed(2)},${this.roiB.keypoint.y.toFixed(2)}}`
+          `Multi-Focus | A: {${this.roiA.keypoint.x.toFixed(2)},${this.roiA.keypoint.y.toFixed(2)}} | B: {${this.roiB.keypoint.x.toFixed(2)},${this.roiB.keypoint.y.toFixed(2)}}`
         );
       }
     }
@@ -317,12 +351,23 @@ export class VideoSegmenter {
 
         if (validTrack) {
           this.lastArea = centroid.area;
-          this.roi = { keypoint: { x: centroid.x, y: centroid.y } };
+
+          // Focus Follow: lerp ROI smoothly toward centroid
+          if (this.previousRoi) {
+            const smoothX = VideoSegmenter.lerp(this.previousRoi.x, centroid.x, this.followDamping);
+            const smoothY = VideoSegmenter.lerp(this.previousRoi.y, centroid.y, this.followDamping);
+            this.roi = { keypoint: { x: smoothX, y: smoothY } };
+            this.previousRoi = { x: smoothX, y: smoothY };
+          } else {
+            // First frame after click: snap directly to centroid
+            this.roi = { keypoint: { x: centroid.x, y: centroid.y } };
+            this.previousRoi = { x: centroid.x, y: centroid.y };
+          }
 
           if (this.app.state === AppState.SEGMENTING) {
             this.app.setState(AppState.TRACKING);
           }
-          this.updateDebugLog(`Tracking at ROI: {x: ${centroid.x.toFixed(2)}, y: ${centroid.y.toFixed(2)}}`);
+          this.updateDebugLog(`Tracking at ROI: {x: ${this.roi.keypoint.x.toFixed(2)}, y: ${this.roi.keypoint.y.toFixed(2)}}`);
         } else {
           // Contour failed threshold, fallback to original ROI to try a fresh resegment
           this.roi = { ...this.initialRoi }; // Copy original
@@ -342,6 +387,7 @@ export class VideoSegmenter {
   handleMaskFailure() {
     this.maskFailed = true;
     this.roi = null;
+    this.previousRoi = null;
     this.lastMask = null;
     this.lastArea = null;
     if (this.app.state === AppState.TRACKING || this.app.state === AppState.SEGMENTING) {
