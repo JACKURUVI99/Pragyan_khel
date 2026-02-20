@@ -8,7 +8,7 @@ export class VideoSegmenter {
     this.isInitializing = false;
 
     this.framesSinceLastSegment = 0;
-    this.segmentationInterval = 15; // 15 frames
+    this.segmentationInterval = 1; // Run every frame for true tracking
 
     this.roi = null; // {x, y} normalized
     this.lastMask = null; // Float32Array
@@ -52,33 +52,58 @@ export class VideoSegmenter {
   setTarget(normalizedX, normalizedY) {
     if (!this.segmenter) return;
     this.roi = { keypoint: { x: normalizedX, y: normalizedY } };
-    this.framesSinceLastSegment = 0; // trigger immediate segment
+    this.framesSinceLastSegment = 0; // force immediate segment
+    this.maskFailed = false;
 
     if (this.app.state === AppState.STREAMING || this.app.state === AppState.TRACKING) {
       this.app.setState(AppState.SEGMENTING);
     }
+    this.updateDebugLog(`Target set at ROI: {x: ${normalizedX.toFixed(2)}, y: ${normalizedY.toFixed(2)}}`);
+  }
+
+  updateDebugLog(message) {
+    const el = document.getElementById('debug-text');
+    if (el) el.innerText = message;
+  }
+
+  calculateCentroid(mask, width, height) {
+    let sumX = 0, sumY = 0, count = 0;
+    // Sample every nth pixel to keep it fast
+    const step = 4;
+    for (let y = 0; y < height; y += step) {
+      for (let x = 0; x < width; x += step) {
+        const idx = y * width + x;
+        if (mask[idx] > 0.5) {
+          sumX += x;
+          sumY += y;
+          count++;
+        }
+      }
+    }
+    if (count < 10) return null; // Mask failed
+    return { x: sumX / count / width, y: sumY / count / height };
   }
 
   processFrame(videoElement, timestamp) {
-    if (!this.segmenter) return null;
+    if (!this.segmenter || this.maskFailed) return null;
 
-    // Remember dimensions for WebGL texture creation later
     this.width = videoElement.videoWidth;
     this.height = videoElement.videoHeight;
 
     if (!this.roi) return null;
 
+    // The user requested: "re segmentation shud happen only when masking fails"
+    // So we assume "segmentation" is the heavy process, and "tracking" is holding it?
+    // Actually, InteractiveSegmenter requires the ROI to track.
     if (this.framesSinceLastSegment === 0) {
-      // InteractiveSegmenter API
       try {
-        this.segmenter.segment(videoElement, this.roi, (result) => {
-          if (result && result.confidenceMasks && result.confidenceMasks.length > 0) {
-            this.lastMask = result.confidenceMasks[0].getAsFloat32Array();
-            if (this.app.state === AppState.SEGMENTING) {
-              this.app.setState(AppState.TRACKING);
-            }
-          }
-        });
+        // InteractiveSegmenter API
+        // If segmentForVideo exists we use it, otherwise fallback to segment
+        if (this.segmenter.segmentForVideo) {
+          this.segmenter.segmentForVideo(videoElement, this.roi, timestamp, (result) => this.handleResult(result));
+        } else {
+          this.segmenter.segment(videoElement, this.roi, (result) => this.handleResult(result));
+        }
       } catch (e) {
         console.error("Segmentation error:", e);
       }
@@ -94,5 +119,37 @@ export class VideoSegmenter {
       width: this.width,
       height: this.height
     };
+  }
+
+  handleResult(result) {
+    if (result && result.confidenceMasks && result.confidenceMasks.length > 0) {
+      this.lastMask = result.confidenceMasks[0].getAsFloat32Array();
+
+      // Check if masking failed (compute centroid to update ROI for tracking)
+      const centroid = this.calculateCentroid(this.lastMask, this.width, this.height);
+
+      if (centroid) {
+        this.roi = { keypoint: { x: centroid.x, y: centroid.y } };
+        if (this.app.state === AppState.SEGMENTING) {
+          this.app.setState(AppState.TRACKING);
+        }
+        this.updateDebugLog(`Tracking at ROI: {x: ${centroid.x.toFixed(2)}, y: ${centroid.y.toFixed(2)}}`);
+      } else {
+        this.updateDebugLog("Masking failed. Dropping track.");
+        this.handleMaskFailure();
+      }
+    } else {
+      this.updateDebugLog("Result empty. Masking failed.");
+      this.handleMaskFailure();
+    }
+  }
+
+  handleMaskFailure() {
+    this.maskFailed = true;
+    this.roi = null;
+    this.lastMask = null;
+    if (this.app.state === AppState.TRACKING || this.app.state === AppState.SEGMENTING) {
+      this.app.setState(AppState.STREAMING);
+    }
   }
 }

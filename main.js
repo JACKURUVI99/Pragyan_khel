@@ -30,6 +30,7 @@ class App {
       stateDot: document.getElementById('state-dot'),
       loadingOverlay: document.getElementById('loading-overlay'),
       idleView: document.getElementById('idle-view'),
+      debugText: document.getElementById('debug-text'),
     };
 
     this.isDebug = false;
@@ -58,6 +59,10 @@ class App {
       this.debugBtn.classList.toggle('bg-zinc-800', !this.isDebug);
       this.debugBtn.classList.toggle('bg-emerald-900', this.isDebug);
       this.debugBtn.classList.toggle('text-emerald-400', this.isDebug);
+
+      if (this.ui.debugText) {
+        this.ui.debugText.classList.toggle('hidden', !this.isDebug);
+      }
     });
 
     // Video events
