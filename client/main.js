@@ -38,6 +38,7 @@ class App {
     };
 
     this.isDebug = false;
+    this.lightingMode = 0; // 0=blur, 1=warm, 2=cool, 3=spotlight, 4=vignette
 
     // Rack focus click positions (in CSS px relative to canvas container)
     this.rackDotAPos = null;
@@ -72,6 +73,14 @@ class App {
         this.ui.debugText.classList.toggle('hidden', !this.isDebug);
       }
     });
+
+    // Lighting Mode Selector
+    const lightingSelect = document.getElementById('lighting-select');
+    if (lightingSelect) {
+      lightingSelect.addEventListener('change', (e) => {
+        this.lightingMode = parseInt(e.target.value, 10);
+      });
+    }
 
     // Video events
     this.video.addEventListener('loadedmetadata', () => {
@@ -255,7 +264,7 @@ class App {
       const maskData = this.segmenter.processFrame(this.video, timestamp);
 
       // Phase 4: Render via WebGL
-      this.renderer.render(this.video, maskData, this.isDebug);
+      this.renderer.render(this.video, maskData, this.isDebug, this.lightingMode);
 
       this.video.requestVideoFrameCallback(processFrame);
     };

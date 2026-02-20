@@ -36,16 +36,74 @@ export class Renderer {
             uniform sampler2D u_maskB;
             uniform bool u_debug;
             uniform bool u_multiFocus;
+            uniform int u_lightMode;   // 0=blur, 1=warm, 2=cool, 3=spotlight, 4=vignette
             out vec4 outColor;
+
+            // ── Reusable box blur ──
+            vec4 blurBG(vec2 uv) {
+                vec4 color = vec4(0.0);
+                vec2 texSize = vec2(textureSize(u_image, 0));
+                vec2 texelSize = 1.0 / texSize;
+                float total = 0.0;
+                float radius = 4.0;
+                for (float x = -2.0; x <= 2.0; x++) {
+                    for (float y = -2.0; y <= 2.0; y++) {
+                        color += texture(u_image, uv + vec2(x, y) * texelSize * radius);
+                        total += 1.0;
+                    }
+                }
+                return color / total;
+            }
+
+            // ── Desaturate helper ──
+            vec3 desaturate(vec3 c, float amount) {
+                float lum = dot(c, vec3(0.299, 0.587, 0.114));
+                return mix(c, vec3(lum), amount);
+            }
+
+            // ── Apply lighting effect on background color ──
+            vec4 applyLighting(vec4 bg, vec2 uv) {
+                if (u_lightMode == 0) {
+                    // Mode 0: Plain blur (no color change)
+                    return bg;
+                }
+                if (u_lightMode == 1) {
+                    // Mode 1: Warm Studio — amber tint + slight brightness lift
+                    vec3 warm = mix(bg.rgb, vec3(1.0, 0.82, 0.55), 0.28);
+                    warm *= 1.08;
+                    return vec4(warm, 1.0);
+                }
+                if (u_lightMode == 2) {
+                    // Mode 2: Cool Night — blue-teal shift + slight dim
+                    vec3 cool = mix(bg.rgb, vec3(0.3, 0.55, 0.95), 0.30);
+                    cool *= 0.85;
+                    return vec4(cool, 1.0);
+                }
+                if (u_lightMode == 3) {
+                    // Mode 3: Spotlight — radial darkening from center
+                    float dist = length(uv - vec2(0.5));
+                    float falloff = smoothstep(0.15, 0.75, dist);
+                    vec3 lit = bg.rgb * mix(1.0, 0.12, falloff);
+                    return vec4(lit, 1.0);
+                }
+                if (u_lightMode == 4) {
+                    // Mode 4: Vignette — soft edge darkening + desaturation
+                    float dist = length(uv - vec2(0.5));
+                    float vig = smoothstep(0.25, 0.85, dist);
+                    vec3 c = desaturate(bg.rgb, vig * 0.6);
+                    c *= mix(1.0, 0.3, vig);
+                    return vec4(c, 1.0);
+                }
+                return bg;
+            }
 
             void main() {
                 float maskValA = texture(u_mask, v_texCoord).r;
                 float maskValB = texture(u_maskB, v_texCoord).r;
                 vec4 rawColor = texture(u_image, v_texCoord);
-                
+
                 if (u_debug) {
                     if (u_multiFocus) {
-                        // Debug: Red for mask A, Blue for mask B
                         vec4 tinted = rawColor;
                         tinted = mix(tinted, vec4(1.0, 0.0, 0.0, 1.0), maskValA * 0.5);
                         tinted = mix(tinted, vec4(0.0, 0.3, 1.0, 1.0), maskValB * 0.5);
@@ -56,49 +114,22 @@ export class Renderer {
                     return;
                 }
 
-                // ── Multi-Focus mode: both regions stay sharp ──
+                // ── Multi-Focus mode ──
                 if (u_multiFocus) {
                     float sharpness = max(maskValA, maskValB);
-
                     if (sharpness > 0.1) {
                         outColor = rawColor;
                     } else {
-                        // Blur everything outside both masks
-                        vec4 color = vec4(0.0);
-                        vec2 texSize = vec2(textureSize(u_image, 0));
-                        vec2 texelSize = 1.0 / texSize;
-                        float total = 0.0;
-                        float radius = 4.0;
-
-                        for (float x = -2.0; x <= 2.0; x++) {
-                            for (float y = -2.0; y <= 2.0; y++) {
-                                color += texture(u_image, v_texCoord + vec2(x, y) * texelSize * radius);
-                                total += 1.0;
-                            }
-                        }
-                        outColor = color / total;
+                        outColor = applyLighting(blurBG(v_texCoord), v_texCoord);
                     }
                     return;
                 }
 
-                // ── Single focus mode (original) ──
+                // ── Single focus mode ──
                 if (maskValA > 0.1) {
                     outColor = rawColor;
                 } else {
-                    // Simple box blur inline
-                    vec4 color = vec4(0.0);
-                    vec2 texSize = vec2(textureSize(u_image, 0));
-                    vec2 texelSize = 1.0 / texSize;
-                    float total = 0.0;
-                    float radius = 4.0; 
-
-                    for (float x = -2.0; x <= 2.0; x++) {
-                        for (float y = -2.0; y <= 2.0; y++) {
-                            color += texture(u_image, v_texCoord + vec2(x, y) * texelSize * radius);
-                            total += 1.0;
-                        }
-                    }
-                    outColor = color / total;
+                    outColor = applyLighting(blurBG(v_texCoord), v_texCoord);
                 }
             }
         `;
@@ -200,7 +231,7 @@ export class Renderer {
     }
   }
 
-  render(videoElement, maskData, isDebug) {
+  render(videoElement, maskData, isDebug, lightingMode = 0) {
     if (!this.gl) return;
     const gl = this.gl;
 
@@ -230,6 +261,7 @@ export class Renderer {
     gl.bindVertexArray(this.vao);
     gl.uniform1i(gl.getUniformLocation(this.program, "u_debug"), isDebug ? 1 : 0);
     gl.uniform1i(gl.getUniformLocation(this.program, "u_multiFocus"), isMultiFocus ? 1 : 0);
+    gl.uniform1i(gl.getUniformLocation(this.program, "u_lightMode"), lightingMode);
 
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }

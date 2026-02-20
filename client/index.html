@@ -77,13 +77,29 @@
     </div>
 
     <!-- Controls -->
-    <div class="flex items-center gap-4 bg-zinc-900 p-2 rounded-lg border border-zinc-800 shadow-lg">
+    <div class="flex items-center gap-4 bg-zinc-900 p-2 rounded-lg border border-zinc-800 shadow-lg flex-wrap">
       <label for="file-upload"
         class="flex items-center gap-2 px-4 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-200 cursor-pointer transition-colors border border-zinc-700/50">
         <i data-lucide="upload" class="w-4 h-4"></i>
         Upload Video
       </label>
       <input id="file-upload" type="file" accept="video/*" class="hidden" />
+
+      <div class="w-px h-8 bg-zinc-800"></div>
+
+      <!-- Lighting Mode Selector -->
+      <div class="flex items-center gap-2">
+        <i data-lucide="sun" class="w-4 h-4 text-amber-400"></i>
+        <select id="lighting-select"
+          class="bg-zinc-800 text-zinc-200 text-sm px-3 py-2 rounded-md border border-zinc-700 hover:bg-zinc-700 transition-colors cursor-pointer focus:outline-none focus:ring-1 focus:ring-emerald-500 appearance-none pr-8"
+          style="background-image: url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23a1a1aa%22 stroke-width=%222%22><polyline points=%226 9 12 15 18 9%22/></svg>'); background-repeat: no-repeat; background-position: right 8px center;">
+          <option value="0">🔵 Blur</option>
+          <option value="1">🟠 Warm Studio</option>
+          <option value="2">🔷 Cool Night</option>
+          <option value="3">💡 Spotlight</option>
+          <option value="4">🌑 Vignette</option>
+        </select>
+      </div>
 
       <div class="w-px h-8 bg-zinc-800"></div>
 
