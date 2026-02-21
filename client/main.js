@@ -393,11 +393,12 @@ class App {
       }
 
       this.video.play();
+
     } catch (err) {
-      console.error('Error accessing webcam:', err);
-      alert('Failed to access webcam. Please check permissions.');
+      console.error('Error accessing webcam or playing video:', err);
+      alert('Failed to access webcam or start video stream.');
     }
-  }
+  } 
 
   handleFileUpload(event) {
     const file = event.target.files[0];
