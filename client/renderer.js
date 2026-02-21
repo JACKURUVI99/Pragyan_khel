@@ -11,6 +11,7 @@ export class Renderer {
     this.program = null;
     this.videoTexture = null;
     this.maskTexture = null;
+    this.maskTextureB = null;
     this.initWebGL();
   }
 
@@ -32,36 +33,134 @@ export class Renderer {
             in vec2 v_texCoord;
             uniform sampler2D u_image;
             uniform sampler2D u_mask;
+            uniform sampler2D u_maskB;
             uniform bool u_debug;
+            uniform bool u_multiFocus;
+            uniform bool u_hasMask;    // false = no focus target yet, show raw video
+            uniform int u_lightMode;   // 0=blur, 1=warm, 2=cool, 3=spotlight, 4=vignette
+            uniform vec2 u_focusCenter; // Normalized subject center for depth blur
             out vec4 outColor;
 
+            // ── Depth-aware box blur ──
+            // depthFactor: 0.0 (near subject) → 1.0 (far away)
+            vec4 blurBG(vec2 uv, float depthFactor) {
+                vec4 color = vec4(0.0);
+                vec2 texSize = vec2(textureSize(u_image, 0));
+                vec2 texelSize = 1.0 / texSize;
+                float total = 0.0;
+                // Scale radius: min 1.0 near subject, max 8.0 far away
+                float radius = mix(1.0, 8.0, depthFactor);
+                for (float x = -2.0; x <= 2.0; x++) {
+                    for (float y = -2.0; y <= 2.0; y++) {
+                        color += texture(u_image, uv + vec2(x, y) * texelSize * radius);
+                        total += 1.0;
+                    }
+                }
+                return color / total;
+            }
+
+            // ── Desaturate helper ──
+            vec3 desaturate(vec3 c, float amount) {
+                float lum = dot(c, vec3(0.299, 0.587, 0.114));
+                return mix(c, vec3(lum), amount);
+            }
+
+            // ── Apply lighting effect on background color ──
+            vec4 applyLighting(vec4 bg, vec2 uv) {
+                if (u_lightMode == 0) {
+                    // Mode 0: Plain blur (no color change)
+                    return bg;
+                }
+                if (u_lightMode == 1) {
+                    // Mode 1: Warm Studio — amber tint + slight brightness lift
+                    vec3 warm = mix(bg.rgb, vec3(1.0, 0.82, 0.55), 0.28);
+                    warm *= 1.08;
+                    return vec4(warm, 1.0);
+                }
+                if (u_lightMode == 2) {
+                    // Mode 2: Cool Night — blue-teal shift + slight dim
+                    vec3 cool = mix(bg.rgb, vec3(0.3, 0.55, 0.95), 0.30);
+                    cool *= 0.85;
+                    return vec4(cool, 1.0);
+                }
+                if (u_lightMode == 3) {
+                    // Mode 3: Spotlight — radial darkening from center
+                    float dist = length(uv - vec2(0.5));
+                    float falloff = smoothstep(0.15, 0.75, dist);
+                    vec3 lit = bg.rgb * mix(1.0, 0.12, falloff);
+                    return vec4(lit, 1.0);
+                }
+                if (u_lightMode == 4) {
+                    // Mode 4: Vignette — soft edge darkening + desaturation
+                    float dist = length(uv - vec2(0.5));
+                    float vig = smoothstep(0.25, 0.85, dist);
+                    vec3 c = desaturate(bg.rgb, vig * 0.6);
+                    c *= mix(1.0, 0.3, vig);
+                    return vec4(c, 1.0);
+                }
+                return bg;
+            }
+
             void main() {
-                float maskVal = texture(u_mask, v_texCoord).r;
                 vec4 rawColor = texture(u_image, v_texCoord);
-                
-                if (u_debug) {
-                    outColor = mix(rawColor, vec4(1.0, 0.0, 0.0, 1.0), maskVal * 0.5);
+
+                // No focus target set yet → pass through raw video
+                if (!u_hasMask) {
+                    outColor = rawColor;
                     return;
                 }
 
-                if (maskVal > 0.1) {
-                    outColor = rawColor;
-                } else {
-                    // Simple box blur inline
-                    vec4 color = vec4(0.0);
-                    vec2 texSize = vec2(textureSize(u_image, 0));
-                    vec2 texelSize = 1.0 / texSize;
-                    float total = 0.0;
-                    float radius = 4.0; 
+                float maskValA = texture(u_mask, v_texCoord).r;
+                float maskValB = texture(u_maskB, v_texCoord).r;
 
-                    for (float x = -2.0; x <= 2.0; x++) {
-                        for (float y = -2.0; y <= 2.0; y++) {
-                            color += texture(u_image, v_texCoord + vec2(x, y) * texelSize * radius);
-                            total += 1.0;
-                        }
+                // Compute depth factor: distance from focus center, clamped to [0,1]
+                float depthDist = length(v_texCoord - u_focusCenter);
+                float depthFactor = clamp(depthDist / 0.7, 0.0, 1.0); // normalize so ~0.7 diagonal = max
+
+                if (u_debug) {
+                    if (u_multiFocus) {
+                        vec4 tinted = rawColor;
+                        tinted = mix(tinted, vec4(1.0, 0.0, 0.0, 1.0), maskValA * 0.5);
+                        tinted = mix(tinted, vec4(0.0, 0.3, 1.0, 1.0), maskValB * 0.5);
+                        outColor = tinted;
+                    } else {
+                        outColor = mix(rawColor, vec4(1.0, 0.0, 0.0, 1.0), maskValA * 0.5);
                     }
-                    outColor = color / total;
+                    return;
                 }
+
+                // Combine masks based on mode
+                float maskVal = u_multiFocus ? max(maskValA, maskValB) : maskValA;
+
+                // Apply smoothstep to soften the mask edge slightly for a more natural transition
+                float alpha = smoothstep(0.0, 0.8, maskVal);
+
+                // Base fallback when not masked
+                if (alpha < 0.001) {
+                    outColor = applyLighting(blurBG(v_texCoord, depthFactor), v_texCoord);
+                    return;
+                }
+                
+                // When fully masked, save some computation
+                if (alpha > 0.999) {
+                    outColor = rawColor;
+                    return;
+                }
+
+                // Calculate the original blurred background
+                vec4 blurredBg = blurBG(v_texCoord, depthFactor);
+                // Calculate the lighted background
+                vec4 litBg = applyLighting(blurredBg, v_texCoord);
+
+                // Un-premultiply the foreground color
+                // We assume rawColor = fg * alpha + blurredBg * (1 - alpha)
+                vec3 fg = (rawColor.rgb - blurredBg.rgb * (1.0 - alpha)) / max(alpha, 0.001);
+
+                // Clamp foreground to prevent artifacting from over/under shooting
+                fg = clamp(fg, 0.0, 1.0);
+
+                // Mix the modified background with the un-premultiplied foreground
+                outColor = vec4(mix(litBg.rgb, fg, alpha), 1.0);
             }
         `;
 
@@ -95,6 +194,7 @@ export class Renderer {
     gl.vertexAttribPointer(texCoordLoc, 2, gl.FLOAT, false, 0, 0);
 
     // Setup textures
+    // TEXTURE0 = video
     gl.activeTexture(gl.TEXTURE0);
     this.videoTexture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.videoTexture);
@@ -102,9 +202,10 @@ export class Renderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
 
-    // WebGL2 Extension for Float32 Textures (EXT_color_buffer_float in WebGL2 allows R32F)
+    // WebGL2 Extension for Float32 Textures
     gl.getExtension('EXT_color_buffer_float');
 
+    // TEXTURE1 = mask A (or single mask)
     gl.activeTexture(gl.TEXTURE1);
     this.maskTexture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.maskTexture);
@@ -113,9 +214,19 @@ export class Renderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
 
+    // TEXTURE2 = mask B (rack focus)
+    gl.activeTexture(gl.TEXTURE2);
+    this.maskTextureB = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.maskTextureB);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+
     gl.useProgram(this.program);
     gl.uniform1i(gl.getUniformLocation(this.program, "u_image"), 0);
     gl.uniform1i(gl.getUniformLocation(this.program, "u_mask"), 1);
+    gl.uniform1i(gl.getUniformLocation(this.program, "u_maskB"), 2);
 
     this.vao = vao;
   }
@@ -138,10 +249,10 @@ export class Renderer {
     return prog;
   }
 
-  updateMaskTexture(maskArray, width, height) {
+  updateMaskTexture(textureUnit, texture, maskArray, width, height) {
     const gl = this.gl;
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, this.maskTexture);
+    gl.activeTexture(textureUnit);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
     if (maskArray && width > 0 && height > 0) {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, width, height, 0, gl.RED, gl.FLOAT, maskArray);
     } else {
@@ -150,25 +261,46 @@ export class Renderer {
     }
   }
 
-  render(videoElement, maskData, isDebug) {
+  render(videoElement, maskData, isDebug, lightingMode = 0) {
     if (!this.gl) return;
     const gl = this.gl;
 
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
 
+    // Upload video texture
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.videoTexture);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, videoElement);
 
-    if (maskData) {
-      this.updateMaskTexture(maskData.mask, maskData.width, maskData.height);
+    const isMultiFocus = maskData && maskData.multiFocus;
+
+    if (isMultiFocus) {
+      // Multi focus: upload both masks
+      this.updateMaskTexture(gl.TEXTURE1, this.maskTexture, maskData.maskA, maskData.width, maskData.height);
+      this.updateMaskTexture(gl.TEXTURE2, this.maskTextureB, maskData.maskB, maskData.width, maskData.height);
+    } else if (maskData) {
+      // Single focus: upload mask A only
+      this.updateMaskTexture(gl.TEXTURE1, this.maskTexture, maskData.mask, maskData.width, maskData.height);
+      this.updateMaskTexture(gl.TEXTURE2, this.maskTextureB, null, 1, 1);
     } else {
-      this.updateMaskTexture(null, 1, 1);
+      this.updateMaskTexture(gl.TEXTURE1, this.maskTexture, null, 1, 1);
+      this.updateMaskTexture(gl.TEXTURE2, this.maskTextureB, null, 1, 1);
     }
 
     gl.useProgram(this.program);
     gl.bindVertexArray(this.vao);
     gl.uniform1i(gl.getUniformLocation(this.program, "u_debug"), isDebug ? 1 : 0);
+    gl.uniform1i(gl.getUniformLocation(this.program, "u_multiFocus"), isMultiFocus ? 1 : 0);
+    gl.uniform1i(gl.getUniformLocation(this.program, "u_lightMode"), lightingMode);
+
+    // hasMask = true only when we have actual mask data from a click
+    const hasMask = maskData && (maskData.mask || maskData.maskA || maskData.multiFocus || maskData.priorityFocus);
+    gl.uniform1i(gl.getUniformLocation(this.program, "u_hasMask"), hasMask ? 1 : 0);
+
+    // Upload focus center for depth blur
+    const fcX = (maskData && maskData.focusCenter) ? maskData.focusCenter.x : 0.5;
+    const fcY = (maskData && maskData.focusCenter) ? maskData.focusCenter.y : 0.5;
+    gl.uniform2f(gl.getUniformLocation(this.program, "u_focusCenter"), fcX, fcY);
 
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }

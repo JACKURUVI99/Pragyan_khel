@@ -6,7 +6,9 @@ export const AppState = {
   LOADING_MODEL: 'LOADING_MODEL',
   STREAMING: 'STREAMING',
   SEGMENTING: 'SEGMENTING',
-  TRACKING: 'TRACKING'
+  TRACKING: 'TRACKING',
+  MULTI_FOCUS: 'MULTI_FOCUS',
+  PRIORITY_FOCUS: 'PRIORITY_FOCUS'
 };
 
 class App {
@@ -31,9 +33,27 @@ class App {
       loadingOverlay: document.getElementById('loading-overlay'),
       idleView: document.getElementById('idle-view'),
       debugText: document.getElementById('debug-text'),
+      rackFocusHint: document.getElementById('rack-focus-hint'),
+      rackFocusDotA: document.getElementById('rack-dot-a'),
+      rackFocusDotB: document.getElementById('rack-dot-b'),
     };
 
     this.isDebug = false;
+    this.lightingMode = 0; // 0=blur, 1=warm, 2=cool, 3=spotlight, 4=vignette
+
+    // Rack focus click positions (in CSS px relative to canvas container)
+    this.rackDotAPos = null;
+    this.rackDotBPos = null;
+
+    // Priority focus subject dot colors
+    this.priorityDotColors = [
+      'bg-amber-400 shadow-amber-400/50',    // #1 Gold
+      'bg-slate-300 shadow-slate-300/50',     // #2 Silver
+      'bg-amber-700 shadow-amber-700/50',     // #3 Bronze
+      'bg-cyan-400 shadow-cyan-400/50',       // #4
+      'bg-pink-400 shadow-pink-400/50',       // #5
+    ];
+    this.priorityDotLabels = ['1st', '2nd', '3rd', '4th', '5th'];
 
     this.init();
   }
@@ -64,6 +84,14 @@ class App {
         this.ui.debugText.classList.toggle('hidden', !this.isDebug);
       }
     });
+
+    // Lighting Mode Selector
+    const lightingSelect = document.getElementById('lighting-select');
+    if (lightingSelect) {
+      lightingSelect.addEventListener('change', (e) => {
+        this.lightingMode = parseInt(e.target.value, 10);
+      });
+    }
 
     // Video events
     this.video.addEventListener('loadedmetadata', () => {
@@ -113,7 +141,59 @@ class App {
     if (clickX >= 0 && clickX <= renderedWidth && clickY >= 0 && clickY <= renderedHeight) {
       const px = clickX / renderedWidth;
       const py = clickY / renderedHeight;
-      this.segmenter.setTarget(px, py);
+
+      if (e.ctrlKey || e.metaKey) {
+        // ── Priority Focus mode (Ctrl+Click) ──
+        const subjectId = this.segmenter.addPrioritySubject(px, py);
+        if (subjectId !== null) {
+          this._renderPriorityPanel();
+        }
+      } else if (e.shiftKey) {
+        // ── Multi-Focus mode ──
+        this.segmenter.setMultiFocusPoint(px, py);
+
+        // Store CSS position for the visual dot overlay
+        const dotX = e.clientX - rect.left;
+        const dotY = e.clientY - rect.top;
+
+        if (this.segmenter.multiFocusClickCount === 1) {
+          this.rackDotAPos = { x: dotX, y: dotY };
+          this.rackDotBPos = null;
+          this._updateRackDots(rect);
+        } else if (this.segmenter.multiFocusClickCount === 2) {
+          this.rackDotBPos = { x: dotX, y: dotY };
+          this._updateRackDots(rect);
+        }
+      } else {
+        // ── Single focus (original) ──
+        this.rackDotAPos = null;
+        this.rackDotBPos = null;
+        this._updateRackDots(rect);
+        this._clearPriorityPanel();
+        this.segmenter.setTarget(px, py);
+      }
+    }
+  }
+
+  _updateRackDots(rect) {
+    const dotA = this.ui.rackFocusDotA;
+    const dotB = this.ui.rackFocusDotB;
+    if (!dotA || !dotB) return;
+
+    if (this.rackDotAPos) {
+      dotA.style.left = `${this.rackDotAPos.x}px`;
+      dotA.style.top = `${this.rackDotAPos.y}px`;
+      dotA.classList.remove('hidden');
+    } else {
+      dotA.classList.add('hidden');
+    }
+
+    if (this.rackDotBPos) {
+      dotB.style.left = `${this.rackDotBPos.x}px`;
+      dotB.style.top = `${this.rackDotBPos.y}px`;
+      dotB.classList.remove('hidden');
+    } else {
+      dotB.classList.add('hidden');
     }
   }
 
@@ -126,6 +206,12 @@ class App {
   updateUI() {
     this.ui.stateDot.className = 'w-2 h-2 rounded-full transition-colors duration-300';
     this.ui.loadingOverlay.classList.add('hidden');
+
+    // Update multi-focus hint visibility
+    if (this.ui.rackFocusHint) {
+      this.ui.rackFocusHint.classList.toggle('hidden',
+        this.state === AppState.IDLE || this.state === AppState.LOADING_MODEL);
+    }
 
     switch (this.state) {
       case AppState.IDLE:
@@ -151,6 +237,99 @@ class App {
         this.ui.idleView.classList.add('hidden');
         this.canvas.classList.remove('hidden');
         break;
+      case AppState.MULTI_FOCUS:
+        this.ui.stateText.textContent = 'MULTI FOCUS';
+        this.ui.stateDot.classList.add('bg-violet-400', 'animate-pulse');
+        this.ui.idleView.classList.add('hidden');
+        this.canvas.classList.remove('hidden');
+        break;
+      case AppState.PRIORITY_FOCUS:
+        this.ui.stateText.textContent = 'PRIORITY';
+        this.ui.stateDot.classList.add('bg-amber-400', 'animate-pulse');
+        this.ui.idleView.classList.add('hidden');
+        this.canvas.classList.remove('hidden');
+        break;
+    }
+  }
+
+  // ── Priority Panel ──
+
+  _renderPriorityPanel() {
+    const panel = document.getElementById('priority-panel');
+    if (!panel) return;
+
+    const subjects = this.segmenter.subjects;
+    if (subjects.length === 0) {
+      panel.classList.add('hidden');
+      return;
+    }
+
+    panel.classList.remove('hidden');
+    const list = panel.querySelector('#priority-list');
+    list.innerHTML = '';
+
+    subjects.forEach((subject, index) => {
+      const colorClass = this.priorityDotColors[index] || 'bg-zinc-400';
+      const label = this.priorityDotLabels[index] || `#${index + 1}`;
+      const weight = (this.segmenter.priorityWeights[index] * 100).toFixed(0);
+
+      const item = document.createElement('div');
+      item.className = 'flex items-center gap-2 px-2 py-1 rounded bg-zinc-800/80 group';
+      item.innerHTML = `
+        <span class="w-3 h-3 rounded-full ${colorClass} shrink-0"></span>
+        <span class="text-zinc-200 text-xs font-mono flex-1">${label} <span class="text-zinc-500">${weight}%</span></span>
+        <button class="priority-up text-zinc-500 hover:text-zinc-200 text-xs px-1 ${index === 0 ? 'invisible' : ''}" data-id="${subject.id}" title="Move up">▲</button>
+        <button class="priority-down text-zinc-500 hover:text-zinc-200 text-xs px-1 ${index === subjects.length - 1 ? 'invisible' : ''}" data-id="${subject.id}" title="Move down">▼</button>
+        <button class="priority-remove text-zinc-500 hover:text-red-400 text-xs px-1" data-id="${subject.id}" title="Remove">✕</button>
+      `;
+      list.appendChild(item);
+    });
+
+    // Bind button events
+    list.querySelectorAll('.priority-up').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = parseInt(btn.dataset.id);
+        const ids = this.segmenter.subjects.map(s => s.id);
+        const idx = ids.indexOf(id);
+        if (idx > 0) {
+          [ids[idx - 1], ids[idx]] = [ids[idx], ids[idx - 1]];
+          this.segmenter.reorderPriorities(ids);
+          this._renderPriorityPanel();
+        }
+      });
+    });
+
+    list.querySelectorAll('.priority-down').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = parseInt(btn.dataset.id);
+        const ids = this.segmenter.subjects.map(s => s.id);
+        const idx = ids.indexOf(id);
+        if (idx < ids.length - 1) {
+          [ids[idx], ids[idx + 1]] = [ids[idx + 1], ids[idx]];
+          this.segmenter.reorderPriorities(ids);
+          this._renderPriorityPanel();
+        }
+      });
+    });
+
+    list.querySelectorAll('.priority-remove').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = parseInt(btn.dataset.id);
+        this.segmenter.removePrioritySubject(id);
+        this._renderPriorityPanel();
+      });
+    });
+  }
+
+  _clearPriorityPanel() {
+    const panel = document.getElementById('priority-panel');
+    if (panel) {
+      panel.classList.add('hidden');
+      const list = panel.querySelector('#priority-list');
+      if (list) list.innerHTML = '';
     }
   }
 
@@ -190,7 +369,7 @@ class App {
       const maskData = this.segmenter.processFrame(this.video, timestamp);
 
       // Phase 4: Render via WebGL
-      this.renderer.render(this.video, maskData, this.isDebug);
+      this.renderer.render(this.video, maskData, this.isDebug, this.lightingMode);
 
       this.video.requestVideoFrameCallback(processFrame);
     };

@@ -56,20 +56,58 @@
         <p class="text-sm font-medium text-zinc-300" id="loading-text">Loading Model...</p>
       </div>
 
+      <!-- Rack Focus Dot Overlays -->
+      <div id="rack-dot-a"
+        class="absolute w-4 h-4 rounded-full bg-red-500/80 border-2 border-white shadow-lg shadow-red-500/50 -translate-x-1/2 -translate-y-1/2 z-30 hidden pointer-events-none animate-pulse">
+      </div>
+      <div id="rack-dot-b"
+        class="absolute w-4 h-4 rounded-full bg-blue-500/80 border-2 border-white shadow-lg shadow-blue-500/50 -translate-x-1/2 -translate-y-1/2 z-30 hidden pointer-events-none animate-pulse">
+      </div>
+
       <!-- Debug Text Overlay -->
       <div id="debug-text"
         class="absolute bottom-4 left-4 text-xs font-mono text-emerald-400 bg-zinc-950/80 px-2 py-1 rounded hidden z-20 transition-opacity">
       </div>
+
+      <!-- Rack Focus Hint -->
+      <div id="rack-focus-hint"
+        class="absolute top-4 right-4 text-xs font-mono text-violet-300 bg-zinc-950/70 backdrop-blur-sm px-3 py-1.5 rounded-lg z-20 hidden border border-violet-500/30 space-y-1">
+        <div>⇧ Shift+Click two points for <span class="text-violet-400 font-semibold">Multi-Focus</span></div>
+        <div>⌃ Ctrl+Click subjects for <span class="text-amber-400 font-semibold">Priority Focus</span></div>
+      </div>
+
+      <!-- Priority Panel -->
+      <div id="priority-panel"
+        class="absolute bottom-4 right-4 z-30 hidden bg-zinc-950/85 backdrop-blur-sm border border-zinc-700/50 rounded-lg px-3 py-2 min-w-[140px] shadow-xl">
+        <div class="text-[10px] font-mono text-zinc-500 uppercase tracking-wider mb-1.5">Priority Order</div>
+        <div id="priority-list" class="flex flex-col gap-1"></div>
+      </div>
     </div>
 
     <!-- Controls -->
-    <div class="flex items-center gap-4 bg-zinc-900 p-2 rounded-lg border border-zinc-800 shadow-lg">
+    <div class="flex items-center gap-4 bg-zinc-900 p-2 rounded-lg border border-zinc-800 shadow-lg flex-wrap">
       <label for="file-upload"
         class="flex items-center gap-2 px-4 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-200 cursor-pointer transition-colors border border-zinc-700/50">
         <i data-lucide="upload" class="w-4 h-4"></i>
         Upload Video
       </label>
       <input id="file-upload" type="file" accept="video/*" class="hidden" />
+
+      <div class="w-px h-8 bg-zinc-800"></div>
+
+      <!-- Lighting Mode Selector -->
+      <div class="flex items-center gap-2">
+        <i data-lucide="sun" class="w-4 h-4 text-amber-400"></i>
+        <select id="lighting-select"
+          class="bg-zinc-800 text-zinc-200 text-sm px-3 py-2 rounded-md border border-zinc-700 hover:bg-zinc-700 transition-colors cursor-pointer focus:outline-none focus:ring-1 focus:ring-emerald-500 appearance-none pr-8"
+          style="background-image: url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23a1a1aa%22 stroke-width=%222%22><polyline points=%226 9 12 15 18 9%22/></svg>'); background-repeat: no-repeat; background-position: right 8px center;">
+          <option value="0">🔵 Blur</option>
+          <option value="1">🟠 Warm Studio</option>
+          <option value="2">🔷 Cool Night</option>
+          <option value="3">💡 Spotlight</option>
+          <option value="4">🌑 Vignette</option>
+        </select>
+      </div>
 
       <div class="w-px h-8 bg-zinc-800"></div>
 
