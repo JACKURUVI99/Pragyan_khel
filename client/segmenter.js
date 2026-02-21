@@ -310,7 +310,8 @@ export class VideoSegmenter {
     return {
       mask: this.lastMask,
       width: this.width,
-      height: this.height
+      height: this.height,
+      focusCenter: this.roi ? { x: this.roi.keypoint.x, y: this.roi.keypoint.y } : null
     };
   }
 
@@ -348,11 +349,16 @@ export class VideoSegmenter {
     // Composite all masks
     this._compositeWeightedMask();
 
+    // Priority focus center = highest priority subject's position
+    const topSubject = this.subjects[0];
+    const fc = topSubject ? { x: topSubject.roi.keypoint.x, y: topSubject.roi.keypoint.y } : null;
+
     return {
       mask: this.compositeMask,
       width: this.width,
       height: this.height,
-      priorityFocus: true
+      priorityFocus: true,
+      focusCenter: fc
     };
   }
 
@@ -457,14 +463,25 @@ export class VideoSegmenter {
       this.framesSinceLastSegment = 0;
     }
 
-    // Return multi-focus data
+    // Multi-focus center = midpoint of A and B (or whichever exists)
+    let fc = null;
+    if (this.roiA && this.roiB) {
+      fc = {
+        x: (this.roiA.keypoint.x + this.roiB.keypoint.x) / 2,
+        y: (this.roiA.keypoint.y + this.roiB.keypoint.y) / 2
+      };
+    } else if (this.roiA) {
+      fc = { x: this.roiA.keypoint.x, y: this.roiA.keypoint.y };
+    }
+
     return {
       multiFocus: true,
       maskA: this.maskA,
       maskB: this.maskB,
       width: this.width,
       height: this.height,
-      mask: this.maskA
+      mask: this.maskA,
+      focusCenter: fc
     };
   }
 

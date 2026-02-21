@@ -37,15 +37,18 @@ export class Renderer {
             uniform bool u_debug;
             uniform bool u_multiFocus;
             uniform int u_lightMode;   // 0=blur, 1=warm, 2=cool, 3=spotlight, 4=vignette
+            uniform vec2 u_focusCenter; // Normalized subject center for depth blur
             out vec4 outColor;
 
-            // ── Reusable box blur ──
-            vec4 blurBG(vec2 uv) {
+            // ── Depth-aware box blur ──
+            // depthFactor: 0.0 (near subject) → 1.0 (far away)
+            vec4 blurBG(vec2 uv, float depthFactor) {
                 vec4 color = vec4(0.0);
                 vec2 texSize = vec2(textureSize(u_image, 0));
                 vec2 texelSize = 1.0 / texSize;
                 float total = 0.0;
-                float radius = 4.0;
+                // Scale radius: min 1.0 near subject, max 8.0 far away
+                float radius = mix(1.0, 8.0, depthFactor);
                 for (float x = -2.0; x <= 2.0; x++) {
                     for (float y = -2.0; y <= 2.0; y++) {
                         color += texture(u_image, uv + vec2(x, y) * texelSize * radius);
@@ -102,6 +105,10 @@ export class Renderer {
                 float maskValB = texture(u_maskB, v_texCoord).r;
                 vec4 rawColor = texture(u_image, v_texCoord);
 
+                // Compute depth factor: distance from focus center, clamped to [0,1]
+                float depthDist = length(v_texCoord - u_focusCenter);
+                float depthFactor = clamp(depthDist / 0.7, 0.0, 1.0); // normalize so ~0.7 diagonal = max
+
                 if (u_debug) {
                     if (u_multiFocus) {
                         vec4 tinted = rawColor;
@@ -120,16 +127,16 @@ export class Renderer {
                     if (sharpness > 0.1) {
                         outColor = rawColor;
                     } else {
-                        outColor = applyLighting(blurBG(v_texCoord), v_texCoord);
+                        outColor = applyLighting(blurBG(v_texCoord, depthFactor), v_texCoord);
                     }
                     return;
                 }
 
-                // ── Single focus mode ──
+                // ── Single focus / Priority focus mode ──
                 if (maskValA > 0.1) {
                     outColor = rawColor;
                 } else {
-                    outColor = applyLighting(blurBG(v_texCoord), v_texCoord);
+                    outColor = applyLighting(blurBG(v_texCoord, depthFactor), v_texCoord);
                 }
             }
         `;
@@ -262,6 +269,11 @@ export class Renderer {
     gl.uniform1i(gl.getUniformLocation(this.program, "u_debug"), isDebug ? 1 : 0);
     gl.uniform1i(gl.getUniformLocation(this.program, "u_multiFocus"), isMultiFocus ? 1 : 0);
     gl.uniform1i(gl.getUniformLocation(this.program, "u_lightMode"), lightingMode);
+
+    // Upload focus center for depth blur
+    const fcX = (maskData && maskData.focusCenter) ? maskData.focusCenter.x : 0.5;
+    const fcY = (maskData && maskData.focusCenter) ? maskData.focusCenter.y : 0.5;
+    gl.uniform2f(gl.getUniformLocation(this.program, "u_focusCenter"), fcX, fcY);
 
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
