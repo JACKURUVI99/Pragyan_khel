@@ -41,22 +41,27 @@ export class Renderer {
             uniform vec2 u_focusCenter; // Normalized subject center for depth blur
             out vec4 outColor;
 
-            // ── Depth-aware box blur ──
+            // ── Depth-aware Gaussian blur ──
             // depthFactor: 0.0 (near subject) → 1.0 (far away)
             vec4 blurBG(vec2 uv, float depthFactor) {
                 vec4 color = vec4(0.0);
                 vec2 texSize = vec2(textureSize(u_image, 0));
                 vec2 texelSize = 1.0 / texSize;
-                float total = 0.0;
-                // Scale radius: min 1.0 near subject, max 8.0 far away
-                float radius = mix(1.0, 8.0, depthFactor);
-                for (float x = -2.0; x <= 2.0; x++) {
-                    for (float y = -2.0; y <= 2.0; y++) {
-                        color += texture(u_image, uv + vec2(x, y) * texelSize * radius);
-                        total += 1.0;
+                float totalWeight = 0.0;
+                // Reduced max radius so gaps between samples stay small
+                float radius = mix(1.0, 3.0, depthFactor);
+                // Gaussian sigma scales with radius for consistent softness
+                float sigma = max(radius * 2.0, 1.0);
+                float invTwoSigmaSq = 1.0 / (2.0 * sigma * sigma);
+                // 13x13 kernel = 169 samples, keeps gaps ≤ 3 texels apart
+                for (float x = -6.0; x <= 6.0; x++) {
+                    for (float y = -6.0; y <= 6.0; y++) {
+                        float w = exp(-(x * x + y * y) * invTwoSigmaSq);
+                        color += texture(u_image, uv + vec2(x, y) * texelSize * radius) * w;
+                        totalWeight += w;
                     }
                 }
-                return color / total;
+                return color / totalWeight;
             }
 
             // ── Desaturate helper ──
