@@ -103,7 +103,8 @@
             <div class="flex items-center gap-2"><span
                 class="bg-zinc-800 border border-zinc-700 px-1.5 py-0.5 rounded shadow-sm text-zinc-200">Ctrl</span>
               <span class="text-zinc-400">+ Click for</span> <span class="text-amber-400 font-bold">Priority
-                Focus</span></div>
+                Focus</span>
+            </div>
           </div>
         </div>
 
@@ -111,29 +112,26 @@
         <div
           class="flex flex-col gap-4 bg-zinc-900/60 backdrop-blur-md border border-zinc-800/80 p-5 rounded-2xl shadow-xl">
 
-          <div class="text-[10px] font-mono font-semibold tracking-widest text-zinc-500 mb-1 uppercase">Source</div>
+          <!-- Source Container -->
+          <div id="source-container" class="flex flex-col gap-4">
+            <div class="text-[10px] font-mono font-semibold tracking-widest text-zinc-500 mb-1 uppercase">Source</div>
 
-          <!-- Source Actions -->
-          <div id="source-actions" class="flex flex-col gap-3">
-            <label for="file-upload"
-              class="flex flex-1 items-center justify-center gap-2 px-4 py-3 rounded-xl bg-zinc-100 hover:bg-white text-zinc-900 font-medium cursor-pointer transition-colors shadow focus:ring-2 focus:ring-emerald-500 focus:outline-none">
-              <i data-lucide="upload" class="w-4 h-4"></i> <span>Upload Video</span>
-            </label>
-            <input id="file-upload" type="file" accept="video/*" class="hidden" />
+            <!-- Source Actions -->
+            <div id="source-actions" class="flex flex-col gap-3">
+              <label for="file-upload"
+                class="flex flex-1 items-center justify-center gap-2 px-4 py-3 rounded-xl bg-zinc-100 hover:bg-white text-zinc-900 font-medium cursor-pointer transition-colors shadow focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                <i data-lucide="upload" class="w-4 h-4"></i> <span>Upload Video</span>
+              </label>
+              <input id="file-upload" type="file" accept="video/*" class="hidden" />
 
-            <button id="webcam-btn"
-              class="flex flex-1 items-center justify-center gap-2 px-4 py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-medium transition-colors border border-zinc-700 shadow-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none">
-              <i data-lucide="camera" class="w-4 h-4 text-emerald-400"></i> <span>Start Webcam</span>
-            </button>
+              <button id="webcam-btn"
+                class="flex flex-1 items-center justify-center gap-2 px-4 py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-medium transition-colors border border-zinc-700 shadow-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                <i data-lucide="camera" class="w-4 h-4 text-emerald-400"></i> <span>Start Webcam</span>
+              </button>
+            </div>
+
+            <div class="h-px w-full bg-zinc-800/80 mt-2"></div>
           </div>
-
-          <!-- Close Source button -->
-          <button id="close-source-btn"
-            class="hidden flex items-center justify-center gap-2 w-full px-4 py-3 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-500 font-medium transition-colors border border-red-500/20 shadow-inner">
-            <i data-lucide="x-circle" class="w-4 h-4"></i> <span>Close Source</span>
-          </button>
-
-          <div class="h-px w-full bg-zinc-800/80 my-2"></div>
 
           <div class="text-[10px] font-mono font-semibold tracking-widest text-zinc-500 mb-1 uppercase">Lighting</div>
           <div class="relative w-full">
@@ -158,7 +156,8 @@
 
           <div
             class="text-[10px] font-mono font-semibold tracking-widest text-zinc-500 uppercase flex items-center gap-2">
-            <i data-lucide="sliders-horizontal" class="w-3.5 h-3.5"></i> Adjustments</div>
+            <i data-lucide="sliders-horizontal" class="w-3.5 h-3.5"></i> Adjustments
+          </div>
 
           <!-- Exposure -->
           <div class="flex flex-col gap-3 w-full">

@@ -67,6 +67,18 @@ export class VideoSegmenter {
         outputCategoryMask: false
       });
 
+      // Pre-warm the model to prevent 1s delay on first click
+      try {
+        const dummyImageData = new ImageData(256, 256);
+        const dummyRoi = { keypoint: { x: 0.5, y: 0.5 } };
+        console.log("Warming up segmentation model...");
+        this.segmenter.segment(dummyImageData, dummyRoi, () => {
+          console.log("Model warmup complete.");
+        });
+      } catch (warmupError) {
+        console.warn("Model warmup failed, first click may be slow:", warmupError);
+      }
+
       this.isInitializing = false;
       if (this.app.state === AppState.LOADING_MODEL) {
         this.app.setState(prevState === AppState.IDLE ? AppState.IDLE : AppState.STREAMING);

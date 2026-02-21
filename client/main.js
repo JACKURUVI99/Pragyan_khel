@@ -36,8 +36,7 @@ class App {
       rackFocusHint: document.getElementById('rack-focus-hint'),
       rackFocusDotA: document.getElementById('rack-dot-a'),
       rackFocusDotB: document.getElementById('rack-dot-b'),
-      sourceActions: document.getElementById('source-actions'),
-      closeSourceBtn: document.getElementById('close-source-btn'),
+      sourceContainer: document.getElementById('source-container'),
     };
 
     this.isDebug = false;
@@ -78,11 +77,6 @@ class App {
 
     // File Upload
     this.fileInput.addEventListener('change', (e) => this.handleFileUpload(e));
-
-    // Close Source
-    if (this.ui.closeSourceBtn) {
-      this.ui.closeSourceBtn.addEventListener('click', () => this.closeSource());
-    }
 
     // Debug Toggle
     this.debugBtn.addEventListener('click', () => {
@@ -254,11 +248,9 @@ class App {
         this.state === AppState.IDLE || this.state === AppState.LOADING_MODEL);
     }
 
-    // Manage source action buttons vs close button
-    if (this.ui.sourceActions && this.ui.closeSourceBtn) {
-      const isIdle = (this.state === AppState.IDLE);
-      this.ui.sourceActions.classList.toggle('hidden', !isIdle);
-      this.ui.closeSourceBtn.classList.toggle('hidden', isIdle);
+    if (this.ui.sourceContainer) {
+      const isIdle = (this.state === AppState.IDLE || this.state === AppState.LOADING_MODEL);
+      this.ui.sourceContainer.classList.toggle('hidden', !isIdle);
     }
 
     switch (this.state) {
@@ -430,11 +422,6 @@ class App {
     const url = URL.createObjectURL(file);
     this.video.src = url;
     this.video.play();
-  }
-
-  closeSource() {
-    window.location = "/";
-    return;
   }
 
   startFrameLoop() {
