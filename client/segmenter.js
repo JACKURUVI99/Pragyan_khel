@@ -532,11 +532,93 @@ export class VideoSegmenter {
     }
   }
 
+  // ── OpenCV Morphological Post-Processing ──
+
+  refineMaskWithOpenCV(maskArray, width, height, clickPointNorm) {
+    if (!window.cv || typeof cv.Mat !== 'function') return maskArray;
+
+    // 1. Create OpenCV Mat from Float32Array (scale to 0-255 uint8)
+    const src = new cv.Mat(height, width, cv.CV_8UC1);
+    for (let i = 0; i < maskArray.length; i++) {
+      src.data[i] = maskArray[i] > 0.5 ? 255 : 0;
+    }
+
+    // 2. Heavy Erosion to break bridges between touching people
+    const kernelSize = 15; // large kernel
+    const M = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(kernelSize, kernelSize));
+    const eroded = new cv.Mat();
+    cv.erode(src, eroded, M, new cv.Point(-1, -1), 1, cv.BORDER_CONSTANT, cv.morphologyDefaultBorderValue());
+
+    // 3. Find Contours (Blobs)
+    const contours = new cv.MatVector();
+    const hierarchy = new cv.Mat();
+    cv.findContours(eroded, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+    // 4. Find which contour contains the original click point
+    const clickX = Math.floor(clickPointNorm.x * width);
+    const clickY = Math.floor(clickPointNorm.y * height);
+    const pt = new cv.Point(clickX, clickY);
+
+    let targetContourIdx = -1;
+    let minDistance = Infinity;
+
+    // Check point polygon test to see if point is inside a contour
+    // If point is outside all (e.g., eroded too much), find the closest
+    for (let i = 0; i < contours.size(); ++i) {
+      const contour = contours.get(i);
+      const dist = cv.pointPolygonTest(contour, pt, true);
+      if (dist >= 0) { // Inside or on edge
+        targetContourIdx = i;
+        break;
+      }
+      // If outside, keep track of the closest one in case the click missed the eroded blob
+      if (Math.abs(dist) < minDistance) {
+        minDistance = Math.abs(dist);
+        targetContourIdx = i;
+      }
+    }
+
+    // 5. Create a new blank mask and draw ONLY the target contour
+    const isolated = new cv.Mat.zeros(height, width, cv.CV_8UC1);
+    if (targetContourIdx !== -1) {
+      const color = new cv.Scalar(255);
+      cv.drawContours(isolated, contours, targetContourIdx, color, -1, cv.LINE_8, hierarchy, 0);
+
+      // 6. Dilate back to original size + a little extra to cover the edges
+      cv.dilate(isolated, isolated, M, new cv.Point(-1, -1), 1, cv.BORDER_CONSTANT, cv.morphologyDefaultBorderValue());
+
+      // 7. Extract back to Float32Array where original mask was also > 0 to keep the exact AI edges
+      const outArray = new Float32Array(maskArray.length);
+      for (let i = 0; i < outArray.length; i++) {
+        // Keep original AI mask shape, but only where our isolated blob exists
+        if (isolated.data[i] > 128 && maskArray[i] > 0.1) {
+          outArray[i] = maskArray[i]; // keep original confidence
+        } else {
+          outArray[i] = 0.0;
+        }
+      }
+
+      src.delete(); M.delete(); eroded.delete(); contours.delete(); hierarchy.delete(); isolated.delete();
+      return outArray;
+    }
+
+    // Fallback if something went wrong
+    src.delete(); M.delete(); eroded.delete(); contours.delete(); hierarchy.delete(); isolated.delete();
+    return maskArray;
+  }
+
   // ── Single-focus result handlers (original) ──
 
   handleResult(result) {
     if (result && result.confidenceMasks && result.confidenceMasks.length > 0) {
-      this.lastMask = result.confidenceMasks[0].getAsFloat32Array();
+      let maskData = result.confidenceMasks[0].getAsFloat32Array();
+
+      // Apply OpenCV Post-Processing if ROI is known
+      if (this.roi && this.width > 0 && this.height > 0) {
+        maskData = this.refineMaskWithOpenCV(maskData, this.width, this.height, this.roi.keypoint);
+      }
+
+      this.lastMask = maskData;
 
       // Check if masking failed (compute centroid to update ROI for tracking)
       const centroid = this.calculateCentroid(this.lastMask, this.width, this.height);

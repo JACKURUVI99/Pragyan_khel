@@ -129,23 +129,38 @@ export class Renderer {
                     return;
                 }
 
-                // ── Multi-Focus mode ──
-                if (u_multiFocus) {
-                    float sharpness = max(maskValA, maskValB);
-                    if (sharpness > 0.1) {
-                        outColor = rawColor;
-                    } else {
-                        outColor = applyLighting(blurBG(v_texCoord, depthFactor), v_texCoord);
-                    }
+                // Combine masks based on mode
+                float maskVal = u_multiFocus ? max(maskValA, maskValB) : maskValA;
+
+                // Apply smoothstep to soften the mask edge slightly for a more natural transition
+                float alpha = smoothstep(0.0, 0.8, maskVal);
+
+                // Base fallback when not masked
+                if (alpha < 0.001) {
+                    outColor = applyLighting(blurBG(v_texCoord, depthFactor), v_texCoord);
+                    return;
+                }
+                
+                // When fully masked, save some computation
+                if (alpha > 0.999) {
+                    outColor = rawColor;
                     return;
                 }
 
-                // ── Single focus / Priority focus mode ──
-                if (maskValA > 0.1) {
-                    outColor = rawColor;
-                } else {
-                    outColor = applyLighting(blurBG(v_texCoord, depthFactor), v_texCoord);
-                }
+                // Calculate the original blurred background
+                vec4 blurredBg = blurBG(v_texCoord, depthFactor);
+                // Calculate the lighted background
+                vec4 litBg = applyLighting(blurredBg, v_texCoord);
+
+                // Un-premultiply the foreground color
+                // We assume rawColor = fg * alpha + blurredBg * (1 - alpha)
+                vec3 fg = (rawColor.rgb - blurredBg.rgb * (1.0 - alpha)) / max(alpha, 0.001);
+
+                // Clamp foreground to prevent artifacting from over/under shooting
+                fg = clamp(fg, 0.0, 1.0);
+
+                // Mix the modified background with the un-premultiplied foreground
+                outColor = vec4(mix(litBg.rgb, fg, alpha), 1.0);
             }
         `;
 
