@@ -655,9 +655,9 @@ export class VideoSegmenter {
           }
           this.updateDebugLog(`Tracking at ROI: {x: ${this.roi.keypoint.x.toFixed(2)}, y: ${this.roi.keypoint.y.toFixed(2)}}`);
         } else {
-          // Contour failed threshold, fallback to original ROI to try a fresh resegment
-          this.roi = { ...this.initialRoi }; // Copy original
-          this.app.setState(AppState.SEGMENTING);
+          // Contour failed threshold. Object likely moved out of view or occluded.
+          // Drop tracking rather than re-segmenting at the original click point.
+          this.handleMaskFailure();
         }
 
       } else {
