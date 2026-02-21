@@ -38,6 +38,8 @@ export class Renderer {
             uniform bool u_multiFocus;
             uniform bool u_hasMask;    // false = no focus target yet, show raw video
             uniform int u_lightMode;   // 0=blur, 1=warm, 2=cool, 3=spotlight, 4=vignette
+            uniform float u_exposure;
+            uniform float u_blurStrength;
             uniform vec2 u_focusCenter; // Normalized subject center for depth blur
             out vec4 outColor;
 
@@ -49,7 +51,7 @@ export class Renderer {
                 vec2 texelSize = 1.0 / texSize;
                 float totalWeight = 0.0;
                 // Reduced max radius so gaps between samples stay small
-                float radius = mix(1.0, 3.0, depthFactor);
+                float radius = mix(1.0, 3.0, depthFactor) * max(u_blurStrength, 0.0);
                 // Gaussian sigma scales with radius for consistent softness
                 float sigma = max(radius * 2.0, 1.0);
                 float invTwoSigmaSq = 1.0 / (2.0 * sigma * sigma);
@@ -112,6 +114,7 @@ export class Renderer {
                 // No focus target set yet → pass through raw video
                 if (!u_hasMask) {
                     outColor = rawColor;
+                    outColor.rgb *= u_exposure;
                     return;
                 }
 
@@ -131,6 +134,7 @@ export class Renderer {
                     } else {
                         outColor = mix(rawColor, vec4(1.0, 0.0, 0.0, 1.0), maskValA * 0.5);
                     }
+                    outColor.rgb *= u_exposure;
                     return;
                 }
 
@@ -143,12 +147,14 @@ export class Renderer {
                 // Base fallback when not masked
                 if (alpha < 0.001) {
                     outColor = applyLighting(blurBG(v_texCoord, depthFactor), v_texCoord);
+                    outColor.rgb *= u_exposure;
                     return;
                 }
                 
                 // When fully masked, save some computation
                 if (alpha > 0.999) {
                     outColor = rawColor;
+                    outColor.rgb *= u_exposure;
                     return;
                 }
 
@@ -166,6 +172,9 @@ export class Renderer {
 
                 // Mix the modified background with the un-premultiplied foreground
                 outColor = vec4(mix(litBg.rgb, fg, alpha), 1.0);
+                
+                // Final Exposure Adjustment
+                outColor.rgb *= u_exposure;
             }
         `;
 
@@ -266,7 +275,7 @@ export class Renderer {
     }
   }
 
-  render(videoElement, maskData, isDebug, lightingMode = 0) {
+  render(videoElement, maskData, isDebug, lightingMode = 0, exposure = 1.0, blurStrength = 1.0) {
     if (!this.gl) return;
     const gl = this.gl;
 
@@ -297,6 +306,8 @@ export class Renderer {
     gl.uniform1i(gl.getUniformLocation(this.program, "u_debug"), isDebug ? 1 : 0);
     gl.uniform1i(gl.getUniformLocation(this.program, "u_multiFocus"), isMultiFocus ? 1 : 0);
     gl.uniform1i(gl.getUniformLocation(this.program, "u_lightMode"), lightingMode);
+    gl.uniform1f(gl.getUniformLocation(this.program, "u_exposure"), exposure);
+    gl.uniform1f(gl.getUniformLocation(this.program, "u_blurStrength"), blurStrength);
 
     // hasMask = true only when we have actual mask data from a click
     const hasMask = maskData && (maskData.mask || maskData.maskA || maskData.multiFocus || maskData.priorityFocus);

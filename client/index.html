@@ -34,88 +34,172 @@
     </div>
   </header>
 
-  <main class="flex-1 max-w-7xl w-full mx-auto p-4 flex flex-col items-center justify-center gap-6">
+  <main class="flex-1 max-w-[1600px] w-full mx-auto p-4 sm:p-6 flex flex-col items-center justify-center">
 
-    <!-- Main Canvas Container -->
-    <div
-      class="relative w-full max-w-4xl aspect-video bg-zinc-900 rounded-xl overflow-hidden border border-zinc-800 shadow-2xl flex items-center justify-center group">
+    <!-- Grid Container -->
+    <div class="w-full grid grid-cols-1 lg:grid-cols-4 gap-6 lg:gap-8 items-start">
 
-      <!-- placeholder text when idle -->
-      <div id="idle-view" class="absolute inset-0 flex flex-col items-center justify-center text-zinc-500 gap-4">
-        <i data-lucide="video" class="w-12 h-12 stroke-[1.5]"></i>
-        <p>Select a video source to begin</p>
+      <!-- Video Region (Left, takes up 3 columns on large screens) -->
+      <div class="lg:col-span-3 flex flex-col gap-4">
+
+        <!-- Main Canvas Container -->
+        <div
+          class="relative w-full aspect-video bg-zinc-900 rounded-2xl overflow-hidden border border-zinc-800 shadow-2xl flex items-center justify-center group ring-1 ring-white/5">
+
+          <!-- placeholder text when idle -->
+          <div id="idle-view"
+            class="absolute inset-0 flex flex-col items-center justify-center text-zinc-500 gap-4 bg-zinc-950/50">
+            <i data-lucide="video" class="w-16 h-16 stroke-[1.5] text-zinc-700"></i>
+            <p class="text-lg font-medium tracking-wide">Select a video source to begin</p>
+          </div>
+
+          <!-- Canvas is overlayed -->
+          <canvas id="output-canvas"
+            class="w-full h-full object-contain hidden cursor-crosshair relative z-10"></canvas>
+
+          <!-- Loading overlay -->
+          <div id="loading-overlay"
+            class="absolute inset-0 bg-zinc-950/80 backdrop-blur-sm z-20 flex flex-col items-center justify-center gap-4 hidden">
+            <i data-lucide="loader-2" class="w-8 h-8 animate-spin text-emerald-400"></i>
+            <p class="text-sm font-medium text-zinc-300 tracking-wide" id="loading-text">Loading Model...</p>
+          </div>
+
+          <!-- Rack Focus Dot Overlays -->
+          <div id="rack-dot-a"
+            class="absolute w-5 h-5 rounded-full bg-red-500/80 border-[3px] border-white shadow-lg shadow-red-500/50 -translate-x-1/2 -translate-y-1/2 z-30 hidden pointer-events-none animate-[pulse_2s_ease-in-out_infinite]">
+          </div>
+          <div id="rack-dot-b"
+            class="absolute w-5 h-5 rounded-full bg-blue-500/80 border-[3px] border-white shadow-lg shadow-blue-500/50 -translate-x-1/2 -translate-y-1/2 z-30 hidden pointer-events-none animate-[pulse_2s_ease-in-out_infinite]">
+          </div>
+
+          <!-- Debug Text Overlay -->
+          <div id="debug-text"
+            class="absolute bottom-4 left-4 text-xs font-mono text-emerald-400 bg-zinc-950/90 backdrop-blur px-3 py-1.5 rounded-lg border border-emerald-500/20 hidden z-20 transition-opacity drop-shadow-lg">
+          </div>
+
+          <!-- Priority Panel -->
+          <div id="priority-panel"
+            class="absolute bottom-4 right-4 z-30 hidden bg-zinc-900/95 backdrop-blur-md border border-zinc-700/50 rounded-xl px-4 py-3 min-w-[160px] shadow-2xl ring-1 ring-black/50">
+            <div class="text-[10px] font-mono text-zinc-400 uppercase tracking-widest mb-2 flex items-center gap-2"><i
+                data-lucide="list-ordered" class="w-3 h-3"></i> Priority Order</div>
+            <div id="priority-list" class="flex flex-col gap-1.5"></div>
+          </div>
+        </div>
       </div>
 
-      <!-- Canvas is overlayed -->
-      <canvas id="output-canvas" class="w-full h-full object-contain hidden cursor-crosshair relative z-10"></canvas>
+      <!-- Controls Region (Right side on large screens) -->
+      <div class="lg:col-span-1 flex flex-col gap-6 w-full">
 
-      <!-- Loading overlay -->
-      <div id="loading-overlay"
-        class="absolute inset-0 bg-zinc-950/80 backdrop-blur-sm z-20 flex flex-col items-center justify-center gap-4 hidden">
-        <i data-lucide="loader-2" class="w-8 h-8 animate-spin text-emerald-400"></i>
-        <p class="text-sm font-medium text-zinc-300" id="loading-text">Loading Model...</p>
+        <!-- Rack Focus Hint Card -->
+        <div id="rack-focus-hint"
+          class="w-full flex flex-col gap-3 text-xs font-mono text-violet-300 bg-zinc-900/40 backdrop-blur-sm px-5 py-4 rounded-2xl border border-violet-500/20 shadow-lg hidden">
+          <div class="flex items-center gap-2 text-violet-400 font-semibold tracking-wide uppercase text-[10px]"><i
+              data-lucide="keyboard" class="w-3.5 h-3.5"></i> Shortcuts</div>
+          <div class="flex flex-col gap-2.5">
+            <div class="flex items-center gap-2"><span
+                class="bg-zinc-800 border border-zinc-700 px-1.5 py-0.5 rounded shadow-sm text-zinc-200">Shift</span>
+              <span class="text-zinc-400">+ Click for</span> <span class="text-violet-400 font-bold">Multi-Focus</span>
+            </div>
+            <div class="flex items-center gap-2"><span
+                class="bg-zinc-800 border border-zinc-700 px-1.5 py-0.5 rounded shadow-sm text-zinc-200">Ctrl</span>
+              <span class="text-zinc-400">+ Click for</span> <span class="text-amber-400 font-bold">Priority
+                Focus</span></div>
+          </div>
+        </div>
+
+        <!-- Primary Actions & Lighting -->
+        <div
+          class="flex flex-col gap-4 bg-zinc-900/60 backdrop-blur-md border border-zinc-800/80 p-5 rounded-2xl shadow-xl">
+
+          <div class="text-[10px] font-mono font-semibold tracking-widest text-zinc-500 mb-1 uppercase">Source</div>
+
+          <!-- Source Actions -->
+          <div id="source-actions" class="flex flex-col gap-3">
+            <label for="file-upload"
+              class="flex flex-1 items-center justify-center gap-2 px-4 py-3 rounded-xl bg-zinc-100 hover:bg-white text-zinc-900 font-medium cursor-pointer transition-colors shadow focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+              <i data-lucide="upload" class="w-4 h-4"></i> <span>Upload Video</span>
+            </label>
+            <input id="file-upload" type="file" accept="video/*" class="hidden" />
+
+            <button id="webcam-btn"
+              class="flex flex-1 items-center justify-center gap-2 px-4 py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-medium transition-colors border border-zinc-700 shadow-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+              <i data-lucide="camera" class="w-4 h-4 text-emerald-400"></i> <span>Start Webcam</span>
+            </button>
+          </div>
+
+          <!-- Close Source button -->
+          <button id="close-source-btn"
+            class="hidden flex items-center justify-center gap-2 w-full px-4 py-3 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-500 font-medium transition-colors border border-red-500/20 shadow-inner">
+            <i data-lucide="x-circle" class="w-4 h-4"></i> <span>Close Source</span>
+          </button>
+
+          <div class="h-px w-full bg-zinc-800/80 my-2"></div>
+
+          <div class="text-[10px] font-mono font-semibold tracking-widest text-zinc-500 mb-1 uppercase">Lighting</div>
+          <div class="relative w-full">
+            <div class="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+              <i data-lucide="sun" class="w-4 h-4 text-amber-400"></i>
+            </div>
+            <select id="lighting-select"
+              class="w-full bg-zinc-950/50 text-zinc-200 text-sm pl-9 pr-8 py-2.5 rounded-xl border border-zinc-700/50 hover:border-zinc-600 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-emerald-500/50 appearance-none font-medium shadow-inner"
+              style="background-image: url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2216%22 height=%2216%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23a1a1aa%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><polyline points=%226 9 12 15 18 9%22/></svg>'); background-repeat: no-repeat; background-position: right 12px center;">
+              <option value="0" class="bg-zinc-900">Normal Blur</option>
+              <option value="1" class="bg-zinc-900">Warm Studio</option>
+              <option value="2" class="bg-zinc-900">Cool Night</option>
+              <option value="3" class="bg-zinc-900">Spotlight</option>
+              <option value="4" class="bg-zinc-900">Vignette</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Advanced Adjustments (Sliders) -->
+        <div
+          class="flex flex-col gap-6 bg-zinc-900/40 backdrop-blur-md border border-zinc-800/50 p-5 rounded-2xl shadow-lg">
+
+          <div
+            class="text-[10px] font-mono font-semibold tracking-widest text-zinc-500 uppercase flex items-center gap-2">
+            <i data-lucide="sliders-horizontal" class="w-3.5 h-3.5"></i> Adjustments</div>
+
+          <!-- Exposure -->
+          <div class="flex flex-col gap-3 w-full">
+            <div class="flex items-center justify-between text-xs font-semibold tracking-wide text-zinc-400">
+              <span class="flex items-center gap-2"><i data-lucide="sun-dim" class="w-3.5 h-3.5 text-amber-500/80"></i>
+                EXPOSURE</span>
+              <span id="exposure-val"
+                class="text-zinc-400 font-mono bg-zinc-950/50 px-2 py-0.5 rounded border border-zinc-800/50">1.0</span>
+            </div>
+            <input type="range" id="exposure-slider" min="0" max="2" step="0.1" value="1"
+              class="w-full h-1.5 bg-zinc-950/80 rounded-lg appearance-none cursor-pointer accent-amber-500 hover:accent-amber-400 transition-all focus:outline-none focus:ring-2 focus:ring-amber-500/30">
+          </div>
+
+          <!-- Blur Strength -->
+          <div class="flex flex-col gap-3 w-full">
+            <div class="flex items-center justify-between text-xs font-semibold tracking-wide text-zinc-400">
+              <span class="flex items-center gap-2"><i data-lucide="droplet" class="w-3.5 h-3.5 text-blue-500/80"></i>
+                BLUR</span>
+              <span id="blur-val"
+                class="text-zinc-400 font-mono bg-zinc-950/50 px-2 py-0.5 rounded border border-zinc-800/50">1.0</span>
+            </div>
+            <input type="range" id="blur-slider" min="0" max="3" step="0.1" value="1"
+              class="w-full h-1.5 bg-zinc-950/80 rounded-lg appearance-none cursor-pointer accent-blue-500 hover:accent-blue-400 transition-all focus:outline-none focus:ring-2 focus:ring-blue-500/30">
+          </div>
+
+          <!-- Speed -->
+          <div class="flex flex-col gap-3 w-full">
+            <div class="flex items-center justify-between text-xs font-semibold tracking-wide text-zinc-400">
+              <span class="flex items-center gap-2"><i data-lucide="fast-forward"
+                  class="w-3.5 h-3.5 text-emerald-500/80"></i> SPEED</span>
+              <span id="speed-val"
+                class="text-zinc-400 font-mono bg-zinc-950/50 px-2 py-0.5 rounded border border-zinc-800/50">1.00x</span>
+            </div>
+            <input type="range" id="speed-slider" min="0.25" max="2" step="0.25" value="1"
+              class="w-full h-1.5 bg-zinc-950/80 rounded-lg appearance-none cursor-pointer accent-emerald-500 hover:accent-emerald-400 transition-all focus:outline-none focus:ring-2 focus:ring-emerald-500/30">
+          </div>
+
+        </div>
+
       </div>
 
-      <!-- Rack Focus Dot Overlays -->
-      <div id="rack-dot-a"
-        class="absolute w-4 h-4 rounded-full bg-red-500/80 border-2 border-white shadow-lg shadow-red-500/50 -translate-x-1/2 -translate-y-1/2 z-30 hidden pointer-events-none animate-pulse">
-      </div>
-      <div id="rack-dot-b"
-        class="absolute w-4 h-4 rounded-full bg-blue-500/80 border-2 border-white shadow-lg shadow-blue-500/50 -translate-x-1/2 -translate-y-1/2 z-30 hidden pointer-events-none animate-pulse">
-      </div>
-
-      <!-- Debug Text Overlay -->
-      <div id="debug-text"
-        class="absolute bottom-4 left-4 text-xs font-mono text-emerald-400 bg-zinc-950/80 px-2 py-1 rounded hidden z-20 transition-opacity">
-      </div>
-
-      <!-- Rack Focus Hint -->
-      <div id="rack-focus-hint"
-        class="absolute top-4 right-4 text-xs font-mono text-violet-300 bg-zinc-950/70 backdrop-blur-sm px-3 py-1.5 rounded-lg z-20 hidden border border-violet-500/30 space-y-1">
-        <div>⇧ Shift+Click two points for <span class="text-violet-400 font-semibold">Multi-Focus</span></div>
-        <div>⌃ Ctrl+Click subjects for <span class="text-amber-400 font-semibold">Priority Focus</span></div>
-      </div>
-
-      <!-- Priority Panel -->
-      <div id="priority-panel"
-        class="absolute bottom-4 right-4 z-30 hidden bg-zinc-950/85 backdrop-blur-sm border border-zinc-700/50 rounded-lg px-3 py-2 min-w-[140px] shadow-xl">
-        <div class="text-[10px] font-mono text-zinc-500 uppercase tracking-wider mb-1.5">Priority Order</div>
-        <div id="priority-list" class="flex flex-col gap-1"></div>
-      </div>
-    </div>
-
-    <!-- Controls -->
-    <div class="flex items-center gap-4 bg-zinc-900 p-2 rounded-lg border border-zinc-800 shadow-lg flex-wrap">
-      <label for="file-upload"
-        class="flex items-center gap-2 px-4 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-200 cursor-pointer transition-colors border border-zinc-700/50">
-        <i data-lucide="upload" class="w-4 h-4"></i>
-        Upload Video
-      </label>
-      <input id="file-upload" type="file" accept="video/*" class="hidden" />
-
-      <div class="w-px h-8 bg-zinc-800"></div>
-
-      <!-- Lighting Mode Selector -->
-      <div class="flex items-center gap-2">
-        <i data-lucide="sun" class="w-4 h-4 text-amber-400"></i>
-        <select id="lighting-select"
-          class="bg-zinc-800 text-zinc-200 text-sm px-3 py-2 rounded-md border border-zinc-700 hover:bg-zinc-700 transition-colors cursor-pointer focus:outline-none focus:ring-1 focus:ring-emerald-500 appearance-none pr-8"
-          style="background-image: url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23a1a1aa%22 stroke-width=%222%22><polyline points=%226 9 12 15 18 9%22/></svg>'); background-repeat: no-repeat; background-position: right 8px center;">
-          <option value="0">Blur</option>
-          <option value="1">Warm Studio</option>
-          <option value="2">Cool Night</option>
-          <option value="3">Spotlight</option>
-          <option value="4">Vignette</option>
-        </select>
-      </div>
-
-      <div class="w-px h-8 bg-zinc-800"></div>
-
-      <button id="webcam-btn"
-        class="flex items-center gap-2 px-4 py-2 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white transition-colors shadow-lg shadow-emerald-900/20">
-        <i data-lucide="camera" class="w-4 h-4"></i>
-        Start Webcam
-      </button>
     </div>
 
     <!-- Hidden Video Element for Source -->

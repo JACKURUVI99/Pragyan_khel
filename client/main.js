@@ -36,10 +36,14 @@ class App {
       rackFocusHint: document.getElementById('rack-focus-hint'),
       rackFocusDotA: document.getElementById('rack-dot-a'),
       rackFocusDotB: document.getElementById('rack-dot-b'),
+      sourceActions: document.getElementById('source-actions'),
+      closeSourceBtn: document.getElementById('close-source-btn'),
     };
 
     this.isDebug = false;
     this.lightingMode = 0; // 0=blur, 1=warm, 2=cool, 3=spotlight, 4=vignette
+    this.exposure = 1.0;
+    this.blurStrength = 1.0;
 
     // Rack focus click positions (in CSS px relative to canvas container)
     this.rackDotAPos = null;
@@ -54,6 +58,8 @@ class App {
       'bg-pink-400 shadow-pink-400/50',       // #5
     ];
     this.priorityDotLabels = ['1st', '2nd', '3rd', '4th', '5th'];
+
+    this.isWebcam = false;
 
     this.init();
   }
@@ -73,6 +79,11 @@ class App {
     // File Upload
     this.fileInput.addEventListener('change', (e) => this.handleFileUpload(e));
 
+    // Close Source
+    if (this.ui.closeSourceBtn) {
+      this.ui.closeSourceBtn.addEventListener('click', () => this.closeSource());
+    }
+
     // Debug Toggle
     this.debugBtn.addEventListener('click', () => {
       this.isDebug = !this.isDebug;
@@ -90,6 +101,36 @@ class App {
     if (lightingSelect) {
       lightingSelect.addEventListener('change', (e) => {
         this.lightingMode = parseInt(e.target.value, 10);
+      });
+    }
+
+    // Image adjustment sliders
+    const exposureSlider = document.getElementById('exposure-slider');
+    const exposureVal = document.getElementById('exposure-val');
+    if (exposureSlider) {
+      exposureSlider.addEventListener('input', (e) => {
+        this.exposure = parseFloat(e.target.value);
+        if (exposureVal) exposureVal.innerText = this.exposure.toFixed(1);
+      });
+    }
+
+    const blurSlider = document.getElementById('blur-slider');
+    const blurVal = document.getElementById('blur-val');
+    if (blurSlider) {
+      blurSlider.addEventListener('input', (e) => {
+        this.blurStrength = parseFloat(e.target.value);
+        if (blurVal) blurVal.innerText = this.blurStrength.toFixed(1);
+      });
+    }
+
+    const speedSlider = document.getElementById('speed-slider');
+    const speedVal = document.getElementById('speed-val');
+    if (speedSlider) {
+      speedSlider.addEventListener('input', (e) => {
+        if (speedVal) speedVal.innerText = parseFloat(e.target.value).toFixed(2) + 'x';
+        if (this.video && !this.isWebcam) {
+          this.video.playbackRate = parseFloat(e.target.value);
+        }
       });
     }
 
@@ -211,6 +252,13 @@ class App {
     if (this.ui.rackFocusHint) {
       this.ui.rackFocusHint.classList.toggle('hidden',
         this.state === AppState.IDLE || this.state === AppState.LOADING_MODEL);
+    }
+
+    // Manage source action buttons vs close button
+    if (this.ui.sourceActions && this.ui.closeSourceBtn) {
+      const isIdle = (this.state === AppState.IDLE);
+      this.ui.sourceActions.classList.toggle('hidden', !isIdle);
+      this.ui.closeSourceBtn.classList.toggle('hidden', isIdle);
     }
 
     switch (this.state) {
@@ -340,6 +388,18 @@ class App {
         audio: false
       });
       this.video.srcObject = stream;
+      this.isWebcam = true;
+
+      const speedSlider = document.getElementById('speed-slider');
+      const speedVal = document.getElementById('speed-val');
+      if (speedSlider) {
+        speedSlider.value = 1;
+        if (speedVal) speedVal.innerText = '1.00x';
+        speedSlider.disabled = true;
+        speedSlider.title = "Speed control disabled for webcam";
+        speedSlider.classList.add('opacity-50', 'cursor-not-allowed');
+      }
+
       this.video.play();
     } catch (err) {
       console.error('Error accessing webcam:', err);
@@ -356,9 +416,25 @@ class App {
     }
 
     this.video.srcObject = null;
+    this.isWebcam = false;
+
+    const speedSlider = document.getElementById('speed-slider');
+    const speedVal = document.getElementById('speed-val');
+    if (speedSlider) {
+      speedSlider.disabled = false;
+      speedSlider.title = "Playback Speed";
+      speedSlider.classList.remove('opacity-50', 'cursor-not-allowed');
+      if (speedVal) speedVal.innerText = parseFloat(speedSlider.value).toFixed(2) + 'x';
+    }
+
     const url = URL.createObjectURL(file);
     this.video.src = url;
     this.video.play();
+  }
+
+  closeSource() {
+    window.location = "/";
+    return;
   }
 
   startFrameLoop() {
@@ -369,7 +445,7 @@ class App {
       const maskData = this.segmenter.processFrame(this.video, timestamp);
 
       // Phase 4: Render via WebGL
-      this.renderer.render(this.video, maskData, this.isDebug, this.lightingMode);
+      this.renderer.render(this.video, maskData, this.isDebug, this.lightingMode, this.exposure, this.blurStrength);
 
       this.video.requestVideoFrameCallback(processFrame);
     };
