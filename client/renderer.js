@@ -36,6 +36,7 @@ export class Renderer {
             uniform sampler2D u_maskB;
             uniform bool u_debug;
             uniform bool u_multiFocus;
+            uniform bool u_hasMask;    // false = no focus target yet, show raw video
             uniform int u_lightMode;   // 0=blur, 1=warm, 2=cool, 3=spotlight, 4=vignette
             uniform vec2 u_focusCenter; // Normalized subject center for depth blur
             out vec4 outColor;
@@ -101,9 +102,16 @@ export class Renderer {
             }
 
             void main() {
+                vec4 rawColor = texture(u_image, v_texCoord);
+
+                // No focus target set yet → pass through raw video
+                if (!u_hasMask) {
+                    outColor = rawColor;
+                    return;
+                }
+
                 float maskValA = texture(u_mask, v_texCoord).r;
                 float maskValB = texture(u_maskB, v_texCoord).r;
-                vec4 rawColor = texture(u_image, v_texCoord);
 
                 // Compute depth factor: distance from focus center, clamped to [0,1]
                 float depthDist = length(v_texCoord - u_focusCenter);
@@ -269,6 +277,10 @@ export class Renderer {
     gl.uniform1i(gl.getUniformLocation(this.program, "u_debug"), isDebug ? 1 : 0);
     gl.uniform1i(gl.getUniformLocation(this.program, "u_multiFocus"), isMultiFocus ? 1 : 0);
     gl.uniform1i(gl.getUniformLocation(this.program, "u_lightMode"), lightingMode);
+
+    // hasMask = true only when we have actual mask data from a click
+    const hasMask = maskData && (maskData.mask || maskData.maskA || maskData.multiFocus || maskData.priorityFocus);
+    gl.uniform1i(gl.getUniformLocation(this.program, "u_hasMask"), hasMask ? 1 : 0);
 
     // Upload focus center for depth blur
     const fcX = (maskData && maskData.focusCenter) ? maskData.focusCenter.x : 0.5;
